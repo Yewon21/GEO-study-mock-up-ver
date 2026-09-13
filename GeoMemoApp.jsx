@@ -83,6 +83,9 @@ const C = {
   shadowLift: "0 2px 4px rgba(20,20,25,0.05), 0 20px 44px rgba(20,20,25,0.10)",
   radius: 22,
   pageBg: "linear-gradient(#FBFBFC, #F1F1F4 42%)",
+  heroGlow:
+    "radial-gradient(60% 100% at 14% 0%, #cfe0ff 0%, rgba(207,224,255,0) 62%), " +
+    "radial-gradient(50% 90% at 88% 0%, #ffd9c2 0%, rgba(255,217,194,0) 60%)",
 };
 
 const ORB = {
@@ -1320,11 +1323,6 @@ function computeDashboardStats(folders, cardsByFolder, reviewHistory) {
   });
   const accuracyPct = totalReview > 0 ? Math.round((totalCorrect / totalReview) * 100) : null;
   const weakestFolders = folderRows.filter((r) => r.accuracy !== null).sort((a, b) => a.accuracy - b.accuracy).slice(0, 3);
-  const started = folders
-    .map((f) => ({ folder: f, reviewCount: (cardsByFolder[f.id] || []).reduce((s, c) => s + (c.reviewCount || 0), 0), cardCount: (cardsByFolder[f.id] || []).length }))
-    .filter((r) => r.reviewCount > 0)
-    .sort((a, b) => b.reviewCount - a.reviewCount);
-  const continueFolder = started[0] || null;
 
   const dayKey = (d) => d.toISOString().slice(0, 10);
   const today = new Date();
@@ -1343,7 +1341,7 @@ function computeDashboardStats(folders, cardsByFolder, reviewHistory) {
   }
   const weekTotal = last7.reduce((s, d) => s + d.count, 0);
 
-  return { accuracyPct, streak, weakCount, weakestFolders, last7, weekTotal, continueFolder };
+  return { accuracyPct, streak, weakCount, weakestFolders, last7, weekTotal };
 }
 
 function DashboardStatTile({ label, value, tone }) {
@@ -1820,20 +1818,6 @@ function SubjectsScreen({ folderCounts, dueCounts, onSelectSubject, onOpenMap, o
                 )}
               </Card>
             </div>
-
-            {stats.continueFolder && (
-              <Card
-                onClick={() => onSelectSubject(stats.continueFolder.folder.subject)}
-                style={{ padding: 24, marginTop: 14, display: "flex", gap: 20, alignItems: "center" }}
-              >
-                <Orb hue={SUBJECTS.find((s) => s.id === stats.continueFolder.folder.subject)?.hue || "blue"} size={56} />
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontFamily: FONT_SANS, fontSize: 16, fontWeight: 500, color: C.ink }}>이어서 학습 · {stats.continueFolder.folder.name}</div>
-                  <div style={{ fontFamily: FONT_SANS, fontSize: 12.5, color: C.inkSoft, marginTop: 4 }}>카드 {stats.continueFolder.cardCount}개</div>
-                </div>
-                <PillButton>이어서 하기</PillButton>
-              </Card>
-            )}
           </div>
         );
       })()}
@@ -2838,10 +2822,12 @@ function TabBar({ active, onNav }) {
 function AppShell({ active, onNav, vp, children, fullBleed }) {
   const sidebar = !vp.isPhone;
   return (
-    <div style={{ background: C.pageBg, backgroundAttachment: "fixed", minHeight: "100vh", fontFamily: FONT_SANS }}>
+    <div style={{ background: C.pageBg, backgroundAttachment: "fixed", minHeight: "100vh", fontFamily: FONT_SANS, position: "relative" }}>
+      <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 340, background: C.heroGlow, pointerEvents: "none" }} />
       {sidebar ? <SideNav active={active} onNav={onNav} /> : <TabBar active={active} onNav={onNav} />}
       <div
         style={{
+          position: "relative",
           marginLeft: sidebar ? 232 : 0,
           padding: fullBleed ? 0 : sidebar ? "40px 40px 64px" : "28px 18px 104px",
           boxSizing: "border-box",
