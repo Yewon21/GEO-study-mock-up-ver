@@ -1296,9 +1296,407 @@ function WorldMapScreen({ notedKeys, onSelectCountry, onBack, wide }) {
 }
 
 /* ----------------------------------------------------------------
+   대시보드 통계 (데스크톱 홈 화면에서 사용)
+----------------------------------------------------------------- */
+const WEEKDAY_LABELS = ["일", "월", "화", "수", "목", "금", "토"];
+
+function computeDashboardStats(folders, cardsByFolder, reviewHistory) {
+  let totalReview = 0;
+  let totalCorrect = 0;
+  let weakCount = 0;
+  const folderRows = folders.map((f) => {
+    const cards = cardsByFolder[f.id] || [];
+    let fReview = 0;
+    let fCorrect = 0;
+    cards.forEach((c) => {
+      fReview += c.reviewCount || 0;
+      fCorrect += c.correctCount || 0;
+      if ((c.reviewCount || 0) >= 3 && c.correctCount / c.reviewCount < 0.6) weakCount++;
+    });
+    totalReview += fReview;
+    totalCorrect += fCorrect;
+    const accuracy = fReview > 0 ? Math.round((fCorrect / fReview) * 100) : null;
+    return { folder: f, accuracy };
+  });
+  const accuracyPct = totalReview > 0 ? Math.round((totalCorrect / totalReview) * 100) : null;
+  const weakestFolders = folderRows.filter((r) => r.accuracy !== null).sort((a, b) => a.accuracy - b.accuracy).slice(0, 3);
+  const started = folders
+    .map((f) => ({ folder: f, reviewCount: (cardsByFolder[f.id] || []).reduce((s, c) => s + (c.reviewCount || 0), 0), cardCount: (cardsByFolder[f.id] || []).length }))
+    .filter((r) => r.reviewCount > 0)
+    .sort((a, b) => b.reviewCount - a.reviewCount);
+  const continueFolder = started[0] || null;
+
+  const dayKey = (d) => d.toISOString().slice(0, 10);
+  const today = new Date();
+  let streak = 0;
+  for (let i = 0; i < 365; i++) {
+    const d = new Date(today);
+    d.setDate(d.getDate() - i);
+    if ((reviewHistory[dayKey(d)] || 0) > 0) streak++;
+    else break;
+  }
+  const last7 = [];
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(today);
+    d.setDate(d.getDate() - i);
+    last7.push({ label: WEEKDAY_LABELS[d.getDay()], count: reviewHistory[dayKey(d)] || 0, isToday: i === 0 });
+  }
+  const weekTotal = last7.reduce((s, d) => s + d.count, 0);
+
+  return { accuracyPct, streak, weakCount, weakestFolders, last7, weekTotal, continueFolder };
+}
+
+function DashboardStatTile({ label, value, tone }) {
+  return (
+    <Card style={{ padding: 20 }}>
+      <div style={{ fontFamily: FONT_SANS, fontSize: 12, color: C.inkSoft }}>{label}</div>
+      <div style={{ fontFamily: FONT_SERIF, fontSize: 34, color: tone || C.ink, marginTop: 8 }}>{value}</div>
+    </Card>
+  );
+}
+
+/* ----------------------------------------------------------------
+   태블릿·데스크톱: 지도 필기 3단 작업 화면
+----------------------------------------------------------------- */
+function MapContinentRail({ query, setQuery, expanded, setExpanded, notedKeys, onSelectCountry }) {
+  const filtered = query.trim()
+    ? COUNTRIES.filter((c) => c.ko.includes(query.trim()) || c.en.toLowerCase().includes(query.trim().toLowerCase()))
+    : [];
+  const flagFor = (en) => {
+    const info = GEO_INFO[en];
+    return info ? flagEmoji(info.iso) : "";
+  };
+  return (
+    <div style={{ width: 250, flexShrink: 0, padding: "30px 18px", boxSizing: "border-box", borderRight: `1px solid ${C.line}`, overflowY: "auto" }}>
+      <input
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        placeholder="나라 검색"
+        style={{ width: "100%", fontFamily: FONT_SANS, fontSize: 13, color: C.ink, background: "#fff", border: "none", borderRadius: 19, padding: "11px 16px", boxSizing: "border-box", outline: "none", marginBottom: 18 }}
+      />
+      {query.trim() ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+          {filtered.length === 0 && <p style={{ fontFamily: FONT_SANS, fontSize: 12, color: C.inkFaint, padding: "0 8px" }}>검색 결과가 없어요.</p>}
+          {filtered.map((c) => (
+            <button
+              key={c.en}
+              onClick={() => onSelectCountry(c.en)}
+              style={{ display: "flex", alignItems: "center", gap: 8, background: "transparent", border: "none", borderRadius: 10, padding: "9px 10px", cursor: "pointer", textAlign: "left" }}
+            >
+              {notedKeys.includes(c.en) && <span style={{ width: 6, height: 6, borderRadius: "50%", background: C.star, flexShrink: 0 }} />}
+              {flagFor(c.en) && <span>{flagFor(c.en)}</span>}
+              <span style={{ fontFamily: FONT_SANS, fontSize: 13, color: C.ink }}>{c.ko}</span>
+            </button>
+          ))}
+        </div>
+      ) : (
+        <div>
+          <div style={{ fontFamily: FONT_SANS, fontSize: 11, color: C.inkFaint, margin: "0 0 8px 8px" }}>대륙</div>
+          {CONTINENTS.map((cont) => {
+            const list = COUNTRIES.filter((c) => c.continent === cont);
+            const notedInCont = list.filter((c) => notedKeys.includes(c.en)).length;
+            const isOpen = expanded === cont;
+            return (
+              <div key={cont}>
+                <div
+                  onClick={() => setExpanded(isOpen ? null : cont)}
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    padding: "10px 12px",
+                    borderRadius: 12,
+                    background: isOpen ? "#fff" : "transparent",
+                    boxShadow: isOpen ? "0 6px 16px rgba(20,20,25,0.06)" : "none",
+                    fontFamily: FONT_SANS,
+                    fontSize: 13.5,
+                    color: isOpen ? C.ink : C.inkSoft,
+                    cursor: "pointer",
+                  }}
+                >
+                  <span>{cont}</span>
+                  <span style={{ color: C.inkFaint }}>{notedInCont}/{list.length}</span>
+                </div>
+                {isOpen && (
+                  <div style={{ padding: "2px 4px 10px" }}>
+                    {list.map((c) => (
+                      <button
+                        key={c.en}
+                        onClick={() => onSelectCountry(c.en)}
+                        style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", background: "transparent", border: "none", borderRadius: 10, padding: "8px 12px", cursor: "pointer", textAlign: "left", fontFamily: FONT_SANS, fontSize: 13, color: C.inkSoft }}
+                      >
+                        {notedKeys.includes(c.en) && <span style={{ width: 6, height: 6, borderRadius: "50%", background: C.star, flexShrink: 0 }} />}
+                        {flagFor(c.en) && <span>{flagFor(c.en)}</span>}
+                        {c.ko}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CountryNotesPanel({ countryKey, notes, onAddEntry, onDeleteEntry, onSelectCountry, folders, cardsByFolder, width = 394 }) {
+  const [activeTag, setActiveTag] = useState(MAP_TAGS[0].key);
+  const [adding, setAdding] = useState(false);
+  const [expandedLinks, setExpandedLinks] = useState(() => new Set());
+
+  useEffect(() => {
+    setActiveTag(MAP_TAGS[0].key);
+    setAdding(false);
+  }, [countryKey]);
+
+  const meta = COUNTRY_BY_EN[countryKey];
+  const koName = meta ? meta.ko : countryKey;
+  const capitalInfo = CAPITALS[countryKey];
+  const geoInfo = GEO_INFO[countryKey];
+  const flag = geoInfo ? flagEmoji(geoInfo.iso) : "";
+  const totalNotes = MAP_TAGS.reduce((s, t) => s + (notes[t.key] || []).length, 0);
+  const activeMeta = MAP_TAGS.find((t) => t.key === activeTag);
+  const entries = notes[activeTag] || [];
+
+  const findEnByKo = (ko) => {
+    const found = COUNTRIES.find((c) => c.ko === ko);
+    return found ? found.en : null;
+  };
+
+  const toggleLink = (id) => {
+    setExpandedLinks((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const findLinkedCard = (link) => {
+    if (!link) return null;
+    const list = cardsByFolder[link.folderId] || [];
+    return list.find((c) => c.id === link.cardId) || null;
+  };
+
+  if (!countryKey) {
+    return (
+      <aside style={{ width, flexShrink: 0, background: "#fff", boxShadow: "-10px 0 40px rgba(20,20,25,0.05)", display: "flex", alignItems: "center", justifyContent: "center", padding: 30, boxSizing: "border-box" }}>
+        <p style={{ fontFamily: FONT_SANS, fontSize: 13.5, color: C.inkFaint, textAlign: "center", margin: 0 }}>지도에서 나라를 선택하면<br />여기에 필기가 나타나요</p>
+      </aside>
+    );
+  }
+
+  return (
+    <aside style={{ width, flexShrink: 0, background: "#fff", padding: "30px 26px 100px", boxSizing: "border-box", boxShadow: "-10px 0 40px rgba(20,20,25,0.05)", position: "relative", overflowY: "auto" }}>
+      <span style={{ fontFamily: FONT_SANS, fontSize: 12, color: C.inkSoft, padding: "6px 12px", borderRadius: 14, background: C.fieldBg }}>
+        {meta ? meta.continent : ""} · 노트 {totalNotes}
+      </span>
+      <div style={{ fontFamily: FONT_SERIF, fontSize: 38, color: C.ink, margin: "16px 0 4px" }}>
+        {flag && <span style={{ marginRight: 8 }}>{flag}</span>}
+        {koName}
+      </div>
+      <div style={{ fontFamily: FONT_SANS, fontSize: 13, color: C.inkSoft }}>
+        {countryKey}
+        {capitalInfo && ` · 수도 ${capitalInfo[0]}`}
+        {capitalInfo && capitalInfo[1] ? ` · 최대도시 ${capitalInfo[1]}` : ""}
+      </div>
+
+      <div style={{ display: "flex", gap: 7, margin: "20px 0 14px", flexWrap: "wrap" }}>
+        {MAP_TAGS.map((tag) => (
+          <button
+            key={tag.key}
+            onClick={() => {
+              setActiveTag(tag.key);
+              setAdding(false);
+            }}
+            style={{
+              padding: "7px 13px",
+              borderRadius: 16,
+              border: "none",
+              cursor: "pointer",
+              background: activeTag === tag.key ? tag.color : C.fieldBg,
+              color: activeTag === tag.key ? "#fff" : tag.color,
+              fontFamily: FONT_SANS,
+              fontSize: 12.5,
+            }}
+          >
+            {tag.label}
+          </button>
+        ))}
+      </div>
+
+      {entries.length === 0 && !adding && (
+        <div style={{ background: C.fieldBg, borderRadius: 20, padding: 18, marginBottom: 12 }}>
+          <p style={{ fontFamily: FONT_SANS, fontSize: 13, color: C.inkFaint, margin: 0 }}>아직 "{activeMeta.label}" 내용이 없어요.</p>
+        </div>
+      )}
+
+      {entries.length > 0 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 12 }}>
+          {entries.map((entry) => {
+            const isExpanded = expandedLinks.has(entry.id);
+            return (
+              <div key={entry.id} style={{ background: C.fieldBg, borderRadius: 20, padding: 18 }}>
+                <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
+                  <p style={{ fontFamily: FONT_SANS, fontSize: 14.5, color: C.ink, margin: 0, lineHeight: 1.7, flex: 1 }}>{renderRich(entry.text)}</p>
+                  <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
+                    {entry.link && (
+                      <RoundIconButton title={isExpanded ? "카드 내용 접기" : `연결된 카드 보기: ${entry.link.cardLabel}`} tone={isExpanded ? "star" : "default"} onClick={() => toggleLink(entry.id)}>
+                        <Link2 size={13} />
+                      </RoundIconButton>
+                    )}
+                    <RoundIconButton title="삭제" tone="danger" onClick={() => onDeleteEntry(activeTag, entry.id)}>
+                      <Trash2 size={13} />
+                    </RoundIconButton>
+                  </div>
+                </div>
+                {entry.link && isExpanded && (
+                  <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${C.line}` }}>
+                    <p style={{ fontFamily: FONT_SANS, fontSize: 11, color: C.inkFaint, margin: "0 0 8px" }}>{entry.link.folderName}</p>
+                    <LinkedCardPreview card={findLinkedCard(entry.link)} />
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {adding ? (
+        <NoteEntryForm
+          folders={folders}
+          cardsByFolder={cardsByFolder}
+          onCancel={() => setAdding(false)}
+          onSave={(data) => {
+            onAddEntry(activeTag, data);
+            setAdding(false);
+          }}
+        />
+      ) : null}
+
+      {geoInfo && geoInfo.borders.length > 0 && (
+        <div style={{ marginTop: 16 }}>
+          <div style={{ fontFamily: FONT_SANS, fontSize: 12, color: C.inkSoft, marginBottom: 10 }}>인접국</div>
+          <div style={{ display: "flex", gap: 7, flexWrap: "wrap" }}>
+            {geoInfo.borders.map((bko) => {
+              const en = findEnByKo(bko);
+              return en ? (
+                <button
+                  key={bko}
+                  onClick={() => onSelectCountry(en)}
+                  style={{ padding: "7px 13px", borderRadius: 16, background: C.fieldBg, border: "none", fontFamily: FONT_SANS, fontSize: 12.5, color: C.ink, cursor: "pointer" }}
+                >
+                  {bko}
+                </button>
+              ) : (
+                <span key={bko} style={{ padding: "7px 13px", borderRadius: 16, background: C.fieldBg, fontFamily: FONT_SANS, fontSize: 12.5, color: C.inkFaint }}>
+                  {bko}
+                </span>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {!adding && (
+        <button
+          onClick={() => setAdding(true)}
+          style={{
+            position: "sticky",
+            bottom: 0,
+            left: 0,
+            width: "100%",
+            marginTop: 20,
+            height: 52,
+            borderRadius: 26,
+            background: C.ink,
+            color: "#fff",
+            border: "none",
+            fontFamily: FONT_SANS,
+            fontSize: 14.5,
+            fontWeight: 500,
+            cursor: "pointer",
+            boxShadow: "0 10px 26px rgba(20,20,25,0.2)",
+          }}
+        >
+          ＋ {activeMeta.label} 필기 추가
+        </button>
+      )}
+    </aside>
+  );
+}
+
+function MapWorkspace({ vp, selectedCountry, notes, notedKeys, onSelectCountry, onAddEntry, onDeleteEntry, folders, cardsByFolder }) {
+  const [query, setQuery] = useState("");
+  const [expanded, setExpanded] = useState(null);
+  const [zoomKey, setZoomKey] = useState("world");
+  const panelWidth = vp.isDesktop ? 400 : 360;
+
+  return (
+    <div style={{ display: "flex", minHeight: "100vh" }}>
+      {vp.isDesktop && <MapContinentRail query={query} setQuery={setQuery} expanded={expanded} setExpanded={setExpanded} notedKeys={notedKeys} onSelectCountry={onSelectCountry} />}
+
+      <div style={{ flex: 1, minWidth: 0, position: "relative", padding: "34px", boxSizing: "border-box", overflowY: "auto" }}>
+        <div style={{ marginBottom: 16 }}>
+          <h1 style={{ fontFamily: FONT_SERIF, fontWeight: 500, fontSize: 28, color: C.ink, margin: 0 }}>지도 필기</h1>
+          <p style={{ fontFamily: FONT_SANS, fontSize: 12.5, color: C.inkSoft, margin: "6px 0 16px" }}>나라를 골라서 기후·지형·인문·지역지리 내용을 정리해요.</p>
+          <div style={{ maxWidth: 320 }}>
+            <ZoomControl zoomKey={zoomKey} onChange={setZoomKey} />
+          </div>
+        </div>
+
+        {vp.isTablet && (
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="나라 검색 · 베트남, 칠레…"
+            style={{ width: "100%", fontFamily: FONT_SANS, fontSize: 13.5, color: C.ink, background: "rgba(255,255,255,0.85)", border: "none", borderRadius: 23, padding: "13px 18px", boxSizing: "border-box", outline: "none", marginBottom: 14 }}
+          />
+        )}
+
+        {vp.isTablet && query.trim() ? (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {COUNTRIES.filter((c) => c.ko.includes(query.trim()) || c.en.toLowerCase().includes(query.trim().toLowerCase())).map((c) => (
+              <Card key={c.en} onClick={() => onSelectCountry(c.en)} style={{ padding: "12px 16px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <span style={{ fontFamily: FONT_SERIF, fontSize: 15, color: C.ink }}>{c.ko}</span>
+                {notedKeys.includes(c.en) && <span style={{ width: 8, height: 8, borderRadius: "50%", background: C.star }} />}
+              </Card>
+            ))}
+          </div>
+        ) : (
+          <>
+            <Card style={{ padding: 14 }}>
+              <MiniWorldMap activeKey={selectedCountry} highlightKeys={notedKeys} onSelectCountry={onSelectCountry} viewBox={ZOOM_REGIONS.find((z) => z.key === zoomKey).viewBox} />
+            </Card>
+            <div style={{ marginTop: 16, background: "rgba(255,255,255,0.9)", display: "inline-flex", gap: 24, alignItems: "center", padding: "14px 20px", borderRadius: 22, boxShadow: C.shadow }}>
+              <div>
+                <div style={{ fontFamily: FONT_SANS, fontSize: 11, color: C.inkSoft }}>필기한 나라</div>
+                <div style={{ fontFamily: FONT_SANS, fontSize: 16, fontWeight: 500, color: C.ink, marginTop: 2 }}>{notedKeys.length} / {COUNTRIES.length}</div>
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+
+      <CountryNotesPanel
+        countryKey={selectedCountry}
+        notes={notes}
+        onAddEntry={onAddEntry}
+        onDeleteEntry={onDeleteEntry}
+        onSelectCountry={onSelectCountry}
+        folders={folders}
+        cardsByFolder={cardsByFolder}
+        width={panelWidth}
+      />
+    </div>
+  );
+}
+
+/* ----------------------------------------------------------------
    화면 0: 과목 선택
 ----------------------------------------------------------------- */
-function SubjectsScreen({ folderCounts, dueCounts, onSelectSubject, onOpenMap, onOpenSearch, onOpenStats, onOpenBackup, wide }) {
+function SubjectsScreen({ folderCounts, dueCounts, onSelectSubject, onOpenMap, onOpenSearch, onOpenStats, onOpenBackup, wide, isDesktop, folders, cardsByFolder, reviewHistory }) {
   const totalFolders = SUBJECTS.reduce((sum, s) => sum + (folderCounts[s.id] || 0), 0);
   const totalDue = SUBJECTS.reduce((sum, s) => sum + (dueCounts[s.id] || 0), 0);
   const busiestId = SUBJECTS.reduce((best, s) => ((dueCounts[s.id] || 0) > (dueCounts[best] || 0) ? s.id : best), SUBJECTS[0]?.id);
@@ -1376,6 +1774,69 @@ function SubjectsScreen({ folderCounts, dueCounts, onSelectSubject, onOpenMap, o
           <div style={{ fontFamily: FONT_SANS, fontSize: 11.5, color: C.inkFaint, marginTop: 3 }}>백지도에 나라별로 정리</div>
         </Card>
       </div>
+
+      {isDesktop && (() => {
+        const stats = computeDashboardStats(folders, cardsByFolder, reviewHistory);
+        const maxDay = Math.max(1, ...stats.last7.map((d) => d.count));
+        return (
+          <div style={{ marginTop: 28 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 14 }}>
+              <DashboardStatTile label="누적 정답률" value={stats.accuracyPct === null ? "—" : `${stats.accuracyPct}%`} />
+              <DashboardStatTile label="연속 학습" value={`${stats.streak}일`} />
+              <DashboardStatTile label="약한 카드" value={`${stats.weakCount}장`} tone={stats.weakCount > 0 ? C.wrong : C.ink} />
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr", gap: 14, marginTop: 14 }}>
+              <Card style={{ padding: 24 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span style={{ fontFamily: FONT_SANS, fontSize: 14, fontWeight: 500, color: C.ink }}>최근 7일 복습량</span>
+                  <span style={{ fontFamily: FONT_SANS, fontSize: 12, color: C.inkSoft }}>{stats.weekTotal}장</span>
+                </div>
+                <div style={{ display: "flex", alignItems: "flex-end", gap: 14, height: 150, marginTop: 22 }}>
+                  {stats.last7.map((d, i) => (
+                    <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
+                      <div style={{ width: "100%", height: Math.max(6, Math.round((d.count / maxDay) * 120)), borderRadius: 12, background: d.isToday && d.count > 0 ? "#4E7FEF" : "#DCE6FB" }} />
+                      <span style={{ fontFamily: FONT_SANS, fontSize: 11, color: d.isToday ? C.ink : C.inkFaint }}>{d.label}</span>
+                    </div>
+                  ))}
+                </div>
+              </Card>
+              <Card style={{ padding: 24 }}>
+                <div style={{ fontFamily: FONT_SANS, fontSize: 14, fontWeight: 500, color: C.ink, marginBottom: 18 }}>폴더별 정답률</div>
+                {stats.weakestFolders.length === 0 ? (
+                  <p style={{ fontFamily: FONT_SANS, fontSize: 13, color: C.inkFaint, margin: 0 }}>아직 퀴즈 기록이 없어요.</p>
+                ) : (
+                  stats.weakestFolders.map((r, i) => (
+                    <div key={r.folder.id} style={{ marginTop: i === 0 ? 0 : 16 }}>
+                      <div style={{ fontFamily: FONT_SANS, fontSize: 13.5, color: C.ink, display: "flex", justifyContent: "space-between" }}>
+                        {r.folder.name}
+                        <span style={{ color: r.accuracy >= 70 ? C.inkSoft : C.wrong }}>{r.accuracy}%</span>
+                      </div>
+                      <div style={{ height: 4, borderRadius: 3, background: C.fieldBg, marginTop: 8, overflow: "hidden" }}>
+                        <div style={{ width: `${r.accuracy}%`, height: "100%", background: r.accuracy >= 70 ? "#4E7FEF" : C.wrong }} />
+                      </div>
+                    </div>
+                  ))
+                )}
+              </Card>
+            </div>
+
+            {stats.continueFolder && (
+              <Card
+                onClick={() => onSelectSubject(stats.continueFolder.folder.subject)}
+                style={{ padding: 24, marginTop: 14, display: "flex", gap: 20, alignItems: "center" }}
+              >
+                <Orb hue={SUBJECTS.find((s) => s.id === stats.continueFolder.folder.subject)?.hue || "blue"} size={56} />
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontFamily: FONT_SANS, fontSize: 16, fontWeight: 500, color: C.ink }}>이어서 학습 · {stats.continueFolder.folder.name}</div>
+                  <div style={{ fontFamily: FONT_SANS, fontSize: 12.5, color: C.inkSoft, marginTop: 4 }}>카드 {stats.continueFolder.cardCount}개</div>
+                </div>
+                <PillButton>이어서 하기</PillButton>
+              </Card>
+            )}
+          </div>
+        );
+      })()}
     </div>
   );
 }
@@ -1421,7 +1882,40 @@ function FolderAccordionBody({ cards, onOpenManage, onOpenStudy, onOpenFavStudy 
   );
 }
 
-function FoldersScreen({ wide, subject, folders, cardsByFolder, dueCount, onOpenFolder, onAddFolder, onRequestDeleteFolder, onOpenQuizPicker, onOpenStudy, onOpenFavStudy, onStartTodayReview, onBack }) {
+function RecentMapNotes({ mapNotesByCountry, onOpenMapCountry }) {
+  const recent = [];
+  Object.entries(mapNotesByCountry || {}).forEach(([countryKey, notes]) => {
+    MAP_TAGS.forEach((tag) => {
+      (notes[tag.key] || []).forEach((entry) => {
+        recent.push({ countryKey, tag, entry });
+      });
+    });
+  });
+  recent.sort((a, b) => (b.entry.createdAt || 0) - (a.entry.createdAt || 0));
+  const top = recent.slice(0, 2);
+  if (top.length === 0) return null;
+  return (
+    <div>
+      <div style={{ fontFamily: FONT_SANS, fontSize: 13, fontWeight: 500, color: C.ink, margin: "24px 0 12px" }}>최근 지도 필기</div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        {top.map(({ countryKey, tag, entry }) => {
+          const meta = COUNTRY_BY_EN[countryKey];
+          return (
+            <Card key={entry.id} onClick={() => onOpenMapCountry(countryKey)} style={{ padding: 16 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ fontFamily: FONT_SANS, fontSize: 14, fontWeight: 500, color: C.ink }}>{meta ? meta.ko : countryKey}</span>
+                <span style={{ fontFamily: FONT_SANS, fontSize: 11, color: tag.color }}>{tag.label}</span>
+              </div>
+              <div style={{ fontFamily: FONT_SANS, fontSize: 12.5, color: C.inkSoft, lineHeight: 1.6, marginTop: 6, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{stripMd(entry.text)}</div>
+            </Card>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function FoldersScreen({ wide, isDesktop, subject, folders, cardsByFolder, dueCount, onOpenFolder, onAddFolder, onRequestDeleteFolder, onOpenQuizPicker, onOpenStudy, onOpenFavStudy, onStartTodayReview, onBack, mapNotesByCountry, onOpenMap, onOpenMapCountry }) {
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState("");
   const [emoji, setEmoji] = useState("");
@@ -1438,7 +1932,8 @@ function FoldersScreen({ wide, subject, folders, cardsByFolder, dueCount, onOpen
   };
 
   return (
-    <div>
+    <div style={{ display: "flex", gap: 28, alignItems: "flex-start" }}>
+    <div style={{ flex: 1, minWidth: 0 }}>
       <BackRow onBack={onBack} label="과목 선택으로" />
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16, flexWrap: "wrap", marginBottom: 6 }}>
         <h1 style={{ fontFamily: FONT_SERIF, fontWeight: 500, fontSize: 36, letterSpacing: "-0.015em", color: C.ink, margin: 0 }}>{subjectMeta ? subjectMeta.name : ""}</h1>
@@ -1541,6 +2036,45 @@ function FoldersScreen({ wide, subject, folders, cardsByFolder, dueCount, onOpen
           </PillButton>
         )}
       </div>
+    </div>
+
+    {isDesktop && (
+      <aside style={{ width: 300, flexShrink: 0, position: "sticky", top: 40 }}>
+        <Card style={{ padding: 20 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div>
+              <div style={{ fontFamily: FONT_SERIF, fontSize: 36, color: C.ink, lineHeight: 1 }}>{dueCount}</div>
+              <div style={{ fontFamily: FONT_SANS, fontSize: 11.5, color: C.inkSoft, marginTop: 4 }}>남은 카드</div>
+            </div>
+            <Orb hue="blue" icon={Sparkles} size={52} />
+          </div>
+          <PillButton full onClick={onStartTodayReview} style={{ marginTop: 18, opacity: dueCount > 0 ? 1 : 0.5 }}>
+            복습 시작
+          </PillButton>
+        </Card>
+
+        <RecentMapNotes mapNotesByCountry={mapNotesByCountry} onOpenMapCountry={onOpenMapCountry} />
+
+        <button
+          onClick={onOpenMap}
+          style={{
+            display: "block",
+            width: "100%",
+            marginTop: 20,
+            background: "repeating-linear-gradient(135deg, #e7e7ea 0 8px, #f1f1f4 8px 16px)",
+            border: "none",
+            borderRadius: 18,
+            height: 120,
+            cursor: "pointer",
+            fontFamily: "ui-monospace, Menlo, monospace",
+            fontSize: 11,
+            color: C.inkSoft,
+          }}
+        >
+          세계지도 미니맵 →
+        </button>
+      </aside>
+    )}
     </div>
   );
 }
@@ -1866,7 +2400,7 @@ function buildQuizQueue(cardsWithFolder, count = 12) {
   });
 }
 
-function QuizScreen({ title, cardsWithFolder, showFolderLabel, rankingMode, capCount = 12, onFinish, onExit, onToggleFavorite }) {
+function QuizScreen({ title, cardsWithFolder, showFolderLabel, rankingMode, capCount = 12, onFinish, onExit, onToggleFavorite, isDesktop }) {
   const initialQueue = useState(() => buildQuizQueue(cardsWithFolder, capCount))[0];
   const totalCount = initialQueue.length;
   const [pool, setPool] = useState(initialQueue);
@@ -1942,6 +2476,74 @@ function QuizScreen({ title, cardsWithFolder, showFolderLabel, rankingMode, capC
   };
 
   const masteredCount = totalCount - pool.length;
+  const focusMode = isDesktop && current.type === "freeform";
+
+  if (focusMode) {
+    return (
+      <div style={{ position: "relative" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 20, marginBottom: 40 }}>
+          <RoundIconButton title="그만두기" onClick={onExit}>
+            <X size={15} />
+          </RoundIconButton>
+          <div style={{ flex: 1, height: 5, borderRadius: 3, background: C.fieldBg, overflow: "hidden" }}>
+            <div style={{ width: `${(masteredCount / totalCount) * 100}%`, height: "100%", background: C.ink }} />
+          </div>
+          <span style={{ fontFamily: FONT_SANS, fontSize: 13, color: C.inkSoft }}>{masteredCount} / {totalCount}</span>
+          <span style={{ fontFamily: FONT_SANS, fontSize: 13, color: C.inkSoft, padding: "7px 14px", borderRadius: 16, background: "rgba(255,255,255,0.8)" }}>주관식 입력</span>
+        </div>
+
+        <div style={{ maxWidth: 840, margin: "0 auto" }}>
+          <div style={{ fontFamily: FONT_SANS, fontSize: 13, color: C.inkSoft, textAlign: "center" }}>{showFolderLabel ? current.folderName : title}</div>
+          <h2 style={{ fontFamily: FONT_SERIF, fontWeight: 500, fontSize: 38, lineHeight: 1.45, color: C.ink, textAlign: "center", margin: "20px 0 0" }}>{renderRich(current.card.question)}</h2>
+          {current.card.photo && <img src={current.card.photo} alt="" style={{ display: "block", margin: "20px auto 0", maxHeight: 220, borderRadius: 16 }} />}
+
+          {!revealed ? (
+            <div>
+              <div style={{ marginTop: 44, background: "#fff", borderRadius: 26, border: `1.5px solid ${C.ink}`, padding: "20px 26px", display: "flex", alignItems: "center", gap: 12, boxShadow: "0 16px 34px rgba(20,20,25,0.08)" }}>
+                <input
+                  ref={inputRef}
+                  value={singleInput}
+                  onChange={(e) => setSingleInput(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && checkSingle()}
+                  placeholder="답을 입력하세요"
+                  style={{ flex: 1, border: "none", outline: "none", background: "transparent", fontFamily: FONT_SANS, fontSize: 20, color: C.ink }}
+                />
+                <span style={{ fontFamily: FONT_SANS, fontSize: 12.5, color: C.inkFaint, padding: "7px 12px", borderRadius: 10, background: C.fieldBg, flexShrink: 0 }}>Enter 로 제출</span>
+              </div>
+              <div style={{ display: "flex", justifyContent: "center", gap: 10, marginTop: 18 }}>
+                <button
+                  onClick={toggleFav}
+                  style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 16px", borderRadius: 18, background: "rgba(255,255,255,0.85)", border: "none", color: C.star, fontFamily: FONT_SANS, fontSize: 13, cursor: "pointer" }}
+                >
+                  <Star size={14} fill={isFav ? C.star : "none"} /> {isFav ? "다시보기 해제" : "다시보기로 표시"}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div>
+              <div style={{ marginTop: 34, background: wasCorrect ? C.correctBg : C.wrongBg, borderRadius: 24, padding: "24px 26px" }}>
+                <div style={{ fontFamily: FONT_SANS, fontSize: 15, fontWeight: 500, color: wasCorrect ? C.correct : C.wrong }}>
+                  {wasCorrect ? `✓ 정답 처리 · ${singleInput}` : "✕ 오답"}
+                </div>
+                <div style={{ fontFamily: FONT_SANS, fontSize: 14, color: "#3d6f52", lineHeight: 1.7, marginTop: 8 }}>
+                  모범 답안: <strong>{renderRich(current.card.answer)}</strong>
+                  {!wasCorrect && <span> · 내 답변: {singleInput}</span>}
+                </div>
+              </div>
+              <div style={{ display: "flex", justifyContent: "center", marginTop: 24 }}>
+                <button
+                  onClick={goNext}
+                  style={{ height: 48, padding: "0 28px", borderRadius: 24, background: C.ink, color: "#fff", border: "none", fontFamily: FONT_SANS, fontSize: 14.5, fontWeight: 500, cursor: "pointer", boxShadow: "0 10px 26px rgba(20,20,25,0.2)" }}
+                >
+                  다음 문제 →
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ maxWidth: 520, margin: "0 auto" }}>
@@ -2101,7 +2703,9 @@ function useViewport() {
       window.removeEventListener("orientationchange", on);
     };
   }, []);
-  return { width: w, isPhone: w < 768, wide: w >= 900, isDesktop: w >= 1180 };
+  const isDesktop = w >= 1180;
+  const wide = w >= 900;
+  return { width: w, isPhone: w < 768, wide, isTablet: wide && !isDesktop, isDesktop };
 }
 
 const NAV_ITEMS = [
@@ -2231,7 +2835,7 @@ function TabBar({ active, onNav }) {
   );
 }
 
-function AppShell({ active, onNav, vp, children }) {
+function AppShell({ active, onNav, vp, children, fullBleed }) {
   const sidebar = !vp.isPhone;
   return (
     <div style={{ background: C.pageBg, backgroundAttachment: "fixed", minHeight: "100vh", fontFamily: FONT_SANS }}>
@@ -2239,11 +2843,12 @@ function AppShell({ active, onNav, vp, children }) {
       <div
         style={{
           marginLeft: sidebar ? 232 : 0,
-          padding: sidebar ? "40px 40px 64px" : "28px 18px 104px",
+          padding: fullBleed ? 0 : sidebar ? "40px 40px 64px" : "28px 18px 104px",
           boxSizing: "border-box",
+          minHeight: sidebar ? "100vh" : undefined,
         }}
       >
-        <div style={{ maxWidth: vp.isDesktop ? 1120 : vp.wide ? 880 : 640, margin: "0 auto" }}>{children}</div>
+        {fullBleed ? children : <div style={{ maxWidth: vp.isDesktop ? 1120 : vp.wide ? 880 : 640, margin: "0 auto" }}>{children}</div>}
       </div>
     </div>
   );
@@ -2260,6 +2865,7 @@ export default function GeoMemoApp() {
   const [confirmState, setConfirmState] = useState(null);
   const closeConfirm = () => setConfirmState(null);
   const [mapNotesByCountry, setMapNotesByCountry] = useState({});
+  const [reviewHistory, setReviewHistory] = useState({});
   useMockupFonts();
   const vp = useViewport();
   const wide = vp.wide;
@@ -2289,6 +2895,9 @@ export default function GeoMemoApp() {
         })
       );
       setMapNotesByCountry(Object.fromEntries(noteEntries));
+
+      const rawHistory = await safeGet("reviewHistory");
+      setReviewHistory(rawHistory ? JSON.parse(rawHistory) : {});
 
       setLoaded(true);
     })();
@@ -2394,7 +3003,7 @@ export default function GeoMemoApp() {
     setMapNotesByCountry((prev) => {
       const existing = prev[countryKey] || {};
       const list = existing[tagKey] || [];
-      const nextForCountry = { ...existing, [tagKey]: [...list, { id: uid(), ...data }] };
+      const nextForCountry = { ...existing, [tagKey]: [...list, { id: uid(), createdAt: Date.now(), ...data }] };
       const next = { ...prev, [countryKey]: nextForCountry };
       safeSet(`mapnotes:${countryKey}`, JSON.stringify(nextForCountry));
       if (!prev[countryKey]) persistMapIndex([...Object.keys(prev), countryKey]);
@@ -2450,6 +3059,12 @@ export default function GeoMemoApp() {
       });
       return nextCardsByFolder;
     });
+    setReviewHistory((prev) => {
+      const todayKey = new Date(now).toISOString().slice(0, 10);
+      const next = { ...prev, [todayKey]: (prev[todayKey] || 0) + results.length };
+      safeSet("reviewHistory", JSON.stringify(next));
+      return next;
+    });
     setScreen({ name: "quizSummary", subject, folderIds, results });
   }, []);
 
@@ -2485,8 +3100,8 @@ export default function GeoMemoApp() {
     else if (key === "backup") setScreen({ name: "backup" });
   };
 
-  const wrap = (child) => (
-    <AppShell active={activeNav} onNav={goNav} vp={vp}>
+  const wrap = (child, opts) => (
+    <AppShell active={activeNav} onNav={goNav} vp={vp} fullBleed={opts && opts.fullBleed}>
       {child}
       {confirmState && <ConfirmModal message={confirmState.message} onConfirm={confirmState.onConfirm} onCancel={closeConfirm} />}
     </AppShell>
@@ -2509,22 +3124,49 @@ export default function GeoMemoApp() {
       folderCounts[s.id] = folders.filter((f) => f.subject === s.id).length;
       dueCounts[s.id] = dueCountFor(s.id);
     });
-    return wrap(<SubjectsScreen wide={wide} folderCounts={folderCounts} dueCounts={dueCounts} onSelectSubject={selectSubject} onOpenMap={openMapHome} onOpenSearch={openSearch} onOpenStats={() => openStats(null)} onOpenBackup={openBackup} />);
-  }
-
-  if (screen.name === "mapHome") {
     return wrap(
-      <WorldMapScreen
+      <SubjectsScreen
         wide={wide}
-        notedKeys={Object.keys(mapNotesByCountry).filter((k) => MAP_TAGS.some((t) => (mapNotesByCountry[k][t.key] || []).length > 0))}
-        onSelectCountry={openCountry}
-        onBack={backToSubjects}
+        isDesktop={vp.isDesktop}
+        folderCounts={folderCounts}
+        dueCounts={dueCounts}
+        onSelectSubject={selectSubject}
+        onOpenMap={openMapHome}
+        onOpenSearch={openSearch}
+        onOpenStats={() => openStats(null)}
+        onOpenBackup={openBackup}
+        folders={folders}
+        cardsByFolder={cardsByFolder}
+        reviewHistory={reviewHistory}
       />
     );
   }
 
-  if (screen.name === "mapCountry") {
+  if (screen.name === "mapHome" || screen.name === "mapCountry") {
     const notedKeys = Object.keys(mapNotesByCountry).filter((k) => MAP_TAGS.some((t) => (mapNotesByCountry[k][t.key] || []).length > 0));
+
+    if (vp.isTablet || vp.isDesktop) {
+      const selectedCountry = screen.name === "mapCountry" ? screen.countryKey : null;
+      return wrap(
+        <MapWorkspace
+          vp={vp}
+          selectedCountry={selectedCountry}
+          notes={selectedCountry ? mapNotesByCountry[selectedCountry] || {} : {}}
+          notedKeys={notedKeys}
+          onSelectCountry={openCountry}
+          onAddEntry={(tagKey, data) => addMapEntry(selectedCountry, tagKey, data)}
+          onDeleteEntry={(tagKey, entryId) => deleteMapEntry(selectedCountry, tagKey, entryId)}
+          folders={folders}
+          cardsByFolder={cardsByFolder}
+        />,
+        { fullBleed: true }
+      );
+    }
+
+    if (screen.name === "mapHome") {
+      return wrap(<WorldMapScreen wide={wide} notedKeys={notedKeys} onSelectCountry={openCountry} onBack={backToSubjects} />);
+    }
+
     return wrap(
       <CountryNotesScreen
         wide={wide}
@@ -2568,6 +3210,7 @@ export default function GeoMemoApp() {
     return wrap(
       <FoldersScreen
         wide={wide}
+        isDesktop={vp.isDesktop}
         subject={subject}
         folders={subjectFolders}
         cardsByFolder={cardsByFolder}
@@ -2580,6 +3223,9 @@ export default function GeoMemoApp() {
         onOpenFavStudy={(fid) => openStudy(subject, fid, true)}
         onStartTodayReview={() => startTodayReview(subject, subjectFolders.map((f) => f.id))}
         onBack={backToSubjects}
+        mapNotesByCountry={mapNotesByCountry}
+        onOpenMap={openMapHome}
+        onOpenMapCountry={openCountry}
       />
     );
   }
@@ -2659,6 +3305,7 @@ export default function GeoMemoApp() {
         onFinish={(results) => finishQuiz(subject, folderIds, results)}
         onExit={() => quizExitTarget(subject, folderIds)}
         onToggleFavorite={toggleFavorite}
+        isDesktop={vp.isDesktop}
       />
     );
   }
