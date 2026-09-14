@@ -28,7 +28,19 @@ import {
   Map as MapIcon,
   Link2,
 } from "lucide-react";
-import { safeGet, safeSet, safeDelete, requestPersistence } from "./storage";
+import {
+  safeGet,
+  safeSet,
+  safeDelete,
+  requestPersistence,
+  supabase,
+  authReady,
+  onAuthStateChange,
+  signInWithGoogle,
+  signOutUser,
+  hasLegacyLocalData,
+  migrateLegacyLocalDataToAccount,
+} from "./storage";
 
 /* ----------------------------------------------------------------
    웹폰트 (목업과 동일: Nanum Myeongjo + Noto Sans KR)
@@ -651,10 +663,17 @@ function StudyScreen({ folderName, cards, onlyFavorites, onExit, onToggleFavorit
 /* ----------------------------------------------------------------
    화면: 백업
 ----------------------------------------------------------------- */
-function BackupScreen({ folders, cardsByFolder, onBack, onImport }) {
+function BackupScreen({ folders, cardsByFolder, onBack, onImport, user, onSignOut, hasLegacyData, onImportLegacy }) {
   const fileRef = useRef(null);
   const [status, setStatus] = useState("");
   const [jsonText, setJsonText] = useState("");
+  const [legacyStatus, setLegacyStatus] = useState("");
+
+  const runLegacyImport = async () => {
+    setLegacyStatus("가져오는 중…");
+    const result = await onImportLegacy();
+    setLegacyStatus(`이 기기에 있던 데이터를 가져왔어요 (${result.migrated}개). 새로고침해서 확인해 보세요.`);
+  };
 
   const doExport = () => {
     const payload = { version: 1, exportedAt: Date.now(), folders, cardsByFolder };
@@ -732,6 +751,24 @@ function BackupScreen({ folders, cardsByFolder, onBack, onImport }) {
             onFocus={(e) => e.target.select()}
             style={{ width: "100%", height: 160, fontFamily: "monospace", fontSize: 11, color: C.inkSoft, background: C.fieldBg, border: "none", borderRadius: 16, padding: 14, boxSizing: "border-box", resize: "vertical" }}
           />
+        </div>
+      )}
+
+      {hasLegacyData && (
+        <Card style={{ padding: 18, marginTop: 20, background: "#FBEEDF" }}>
+          <p style={{ fontFamily: FONT_SANS, fontSize: 13, fontWeight: 500, color: C.ink, margin: "0 0 4px" }}>이 기기에 로그인 전 데이터가 남아있어요</p>
+          <p style={{ fontFamily: FONT_SANS, fontSize: 12.5, color: C.inkSoft, margin: "0 0 12px" }}>계정에 이미 있는 항목은 덮어쓰지 않고, 없는 것만 가져와요.</p>
+          <PillButton onClick={runLegacyImport}>이 기기 데이터 가져오기</PillButton>
+          {legacyStatus && <p style={{ fontFamily: FONT_SANS, fontSize: 12, color: C.inkSoft, margin: "10px 0 0" }}>{legacyStatus}</p>}
+        </Card>
+      )}
+
+      {user && (
+        <div style={{ marginTop: 20, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+          <div style={{ fontFamily: FONT_SANS, fontSize: 12.5, color: C.inkSoft, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {user.email} 계정으로 로그인됨
+          </div>
+          <PillButton tone="secondary" onClick={onSignOut} style={{ flexShrink: 0 }}>로그아웃</PillButton>
         </div>
       )}
     </div>
@@ -3030,8 +3067,9 @@ function AppShell({ active, onNav, vp, children, fullBleed }) {
 /* ----------------------------------------------------------------
    루트
 ----------------------------------------------------------------- */
-export default function GeoMemoApp() {
+function GeoMemoAppInner({ user, onSignOut }) {
   const [loaded, setLoaded] = useState(false);
+  const [hasLegacyData, setHasLegacyData] = useState(false);
   const [folders, setFolders] = useState([]);
   const [cardsByFolder, setCardsByFolder] = useState({});
   const [screen, setScreen] = useState({ name: "subjects" });
@@ -3047,6 +3085,10 @@ export default function GeoMemoApp() {
     (async () => {
       // 브라우저가 저장 공간을 자동으로 비우지 않도록 요청 (실패해도 무시)
       requestPersistence();
+
+      if (user) {
+        hasLegacyLocalData().then(setHasLegacyData);
+      }
 
       const rawFolders = await safeGet("folders");
       const parsedFolders = rawFolders ? JSON.parse(rawFolders) : [];
@@ -3209,6 +3251,15 @@ export default function GeoMemoApp() {
     });
   };
 
+  const importLegacyData = async () => {
+    const result = await migrateLegacyLocalDataToAccount();
+    setHasLegacyData(false);
+    if (result.migrated > 0) {
+      window.location.reload();
+    }
+    return result;
+  };
+
   const finishQuiz = useCallback((subject, folderIds, results) => {
     const now = Date.now();
     const grouped = {};
@@ -3357,7 +3408,18 @@ export default function GeoMemoApp() {
   }
 
   if (screen.name === "backup") {
-    return wrap(<BackupScreen folders={folders} cardsByFolder={cardsByFolder} onBack={backToSubjects} onImport={restoreBackup} />);
+    return wrap(
+      <BackupScreen
+        folders={folders}
+        cardsByFolder={cardsByFolder}
+        onBack={backToSubjects}
+        onImport={restoreBackup}
+        user={user}
+        onSignOut={onSignOut}
+        hasLegacyData={hasLegacyData}
+        onImportLegacy={importLegacyData}
+      />
+    );
   }
 
   if (screen.name === "search") {
@@ -3489,4 +3551,74 @@ export default function GeoMemoApp() {
   }
 
   return null;
+}
+
+/* ----------------------------------------------------------------
+   로그인 게이트 — Supabase가 설정돼 있으면 로그인해야 앱을 볼 수 있다.
+   (설정이 없으면 예전처럼 브라우저 저장소만 쓰는 채로 그냥 통과시킨다)
+----------------------------------------------------------------- */
+function AuthLoadingScreen() {
+  return (
+    <div style={{ background: C.bg, minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <span style={{ fontFamily: FONT_SANS, fontSize: 14, color: C.inkFaint }}>불러오는 중…</span>
+    </div>
+  );
+}
+
+function SignInScreen({ onSignIn }) {
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState("");
+
+  const handleClick = async () => {
+    setError("");
+    setPending(true);
+    try {
+      await onSignIn();
+    } catch (e) {
+      setError("로그인을 시작하지 못했어요. 잠시 후 다시 시도해 주세요.");
+      setPending(false);
+    }
+  };
+
+  return (
+    <div style={{ background: C.heroGlow + ", " + C.pageBg, minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+      <div style={{ background: C.card, borderRadius: 28, padding: "44px 36px", maxWidth: 360, width: "100%", boxShadow: C.shadowLift, textAlign: "center", boxSizing: "border-box" }}>
+        <Orb hue="blue" icon={Globe2} size={56} />
+        <h1 style={{ fontFamily: FONT_SERIF, fontWeight: 500, fontSize: 24, color: C.ink, margin: "20px 0 6px" }}>지리 암기 노트</h1>
+        <p style={{ fontFamily: FONT_SANS, fontSize: 13.5, color: C.inkSoft, margin: "0 0 28px", lineHeight: 1.6 }}>
+          로그인하면 어느 기기에서나 같은 폴더·카드·지도 필기를 볼 수 있어요.
+        </p>
+        <PillButton full onClick={handleClick} style={{ padding: "13px 22px", opacity: pending ? 0.6 : 1 }}>
+          {pending ? "이동하는 중…" : "Google로 로그인"}
+        </PillButton>
+        {error && <p style={{ fontFamily: FONT_SANS, fontSize: 12, color: C.wrong, marginTop: 12 }}>{error}</p>}
+      </div>
+    </div>
+  );
+}
+
+export default function GeoMemoApp() {
+  const [authState, setAuthState] = useState(() => (supabase ? { checked: false, user: null } : { checked: true, user: null }));
+
+  useEffect(() => {
+    if (!supabase) return;
+    let cancelled = false;
+    (async () => {
+      await authReady;
+      const { data } = await supabase.auth.getSession();
+      if (!cancelled) setAuthState({ checked: true, user: data.session ? data.session.user : null });
+    })();
+    const unsubscribe = onAuthStateChange((session) => {
+      setAuthState({ checked: true, user: session ? session.user : null });
+    });
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, []);
+
+  if (!authState.checked) return <AuthLoadingScreen />;
+  if (supabase && !authState.user) return <SignInScreen onSignIn={signInWithGoogle} />;
+
+  return <GeoMemoAppInner user={authState.user} onSignOut={signOutUser} />;
 }

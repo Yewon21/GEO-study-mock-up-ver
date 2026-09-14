@@ -1,20 +1,112 @@
 /* ----------------------------------------------------------------
    저장소 (데이터 보존이 최우선)
 
-   우선순위:
-   1) window.storage  — Claude 아티팩트 안에서 실행될 때만 존재
-   2) IndexedDB       — 일반 배포(Vercel 등)의 기본 저장소. 용량 수백 MB 이상
-   3) localStorage    — IndexedDB를 못 쓰는 환경의 최후 수단 (약 5MB)
+   로그인한 사용자는 Supabase(클라우드 DB)에 저장돼서 기기를 바꿔도
+   같은 데이터가 보인다. 계정마다 자기 데이터만 보이도록 서버 쪽
+   Row Level Security로 강제한다 (supabase/schema.sql 참고).
 
-   기존에 localStorage에 저장돼 있던 데이터는 첫 실행 때 IndexedDB로 자동 이사시킨다.
-   이사 후에도 localStorage 원본은 지우지 않는다 (혹시 모를 사고 대비 백업).
+   로그인 전이거나 Supabase 설정이 없을 때는 예전처럼 브라우저에만
+   저장한다 (우선순위: host storage → IndexedDB → localStorage).
 ----------------------------------------------------------------- */
+
+import { createClient } from "@supabase/supabase-js";
 
 const DB_NAME = "geomemo-db";
 const STORE = "kv";
 const DB_VERSION = 1;
 const LS_PREFIX = "geomemo:";
 const MIGRATED_FLAG = "geomemo:__migrated_to_idb__";
+
+/* ---------- Supabase ---------- */
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+export const supabase =
+  SUPABASE_URL && SUPABASE_ANON_KEY ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
+
+let currentUserId = null;
+let authListeners = [];
+let resolveAuthReady;
+export const authReady = new Promise((resolve) => {
+  resolveAuthReady = resolve;
+});
+
+if (supabase) {
+  supabase.auth
+    .getSession()
+    .then(({ data }) => {
+      currentUserId = data.session?.user?.id || null;
+    })
+    .catch(() => {})
+    .finally(() => resolveAuthReady());
+
+  supabase.auth.onAuthStateChange((_event, session) => {
+    currentUserId = session?.user?.id || null;
+    authListeners.forEach((fn) => fn(session));
+  });
+} else {
+  resolveAuthReady();
+}
+
+export function onAuthStateChange(fn) {
+  authListeners.push(fn);
+  return () => {
+    authListeners = authListeners.filter((f) => f !== fn);
+  };
+}
+
+export function getCurrentUserId() {
+  return currentUserId;
+}
+
+export async function signInWithGoogle() {
+  if (!supabase) throw new Error("Supabase가 설정되지 않았습니다.");
+  return supabase.auth.signInWithOAuth({
+    provider: "google",
+    options: { redirectTo: window.location.origin },
+  });
+}
+
+export async function signOutUser() {
+  if (!supabase) return;
+  await supabase.auth.signOut();
+}
+
+async function kvGetRemote(key) {
+  const { data, error } = await supabase
+    .from("kv_store")
+    .select("value")
+    .eq("user_id", currentUserId)
+    .eq("key", key)
+    .maybeSingle();
+  if (error) {
+    console.warn("[storage] 원격 읽기 실패:", key, error);
+    return null;
+  }
+  return data ? data.value : null;
+}
+
+async function kvSetRemote(key, value) {
+  const { error } = await supabase
+    .from("kv_store")
+    .upsert({ user_id: currentUserId, key, value, updated_at: new Date().toISOString() });
+  if (error) {
+    console.error("[storage] 원격 저장 실패:", key, error);
+    return false;
+  }
+  return true;
+}
+
+async function kvDeleteRemote(key) {
+  const { error } = await supabase.from("kv_store").delete().eq("user_id", currentUserId).eq("key", key);
+  if (error) console.warn("[storage] 원격 삭제 실패:", key, error);
+}
+
+async function kvKeysRemote() {
+  const { data, error } = await supabase.from("kv_store").select("key").eq("user_id", currentUserId);
+  if (error) return [];
+  return (data || []).map((r) => r.key);
+}
 
 /* ---------- 호스트 저장소 (Claude 아티팩트) ---------- */
 const hasHostStorage = () =>
@@ -163,6 +255,8 @@ async function migrateFromLocalStorage() {
 
 /* ---------- 공개 API (기존 코드와 동일한 시그니처) ---------- */
 export async function safeGet(key) {
+  if (supabase && currentUserId) return kvGetRemote(key);
+
   const backend = await pickBackend();
   if (backend === "host") {
     try {
@@ -185,6 +279,13 @@ export async function safeGet(key) {
 }
 
 export async function safeSet(key, value) {
+  if (supabase && currentUserId) {
+    const ok = await kvSetRemote(key, value);
+    if (ok) return true;
+    // 네트워크 문제 등으로 실패하면 로컬에라도 남겨서 다음 로그인 때 안 잃도록 한다
+    return lsSet(key, value);
+  }
+
   const backend = await pickBackend();
   if (backend === "host") {
     try {
@@ -205,6 +306,12 @@ export async function safeSet(key, value) {
 }
 
 export async function safeDelete(key) {
+  if (supabase && currentUserId) {
+    await kvDeleteRemote(key);
+    lsDelete(key);
+    return;
+  }
+
   const backend = await pickBackend();
   if (backend === "host") {
     try {
@@ -223,8 +330,62 @@ export async function safeDelete(key) {
   lsDelete(key);
 }
 
+/* ---------- 로컬 → 계정 1회 이전 ---------- */
+async function collectLegacyLocalKeys() {
+  const keys = new Set();
+  try {
+    const idbList = await idbKeys();
+    (idbList || []).forEach((k) => keys.add(k));
+  } catch (e) {}
+  try {
+    for (let i = 0; i < window.localStorage.length; i++) {
+      const fullKey = window.localStorage.key(i);
+      if (fullKey && fullKey.startsWith(LS_PREFIX) && fullKey !== MIGRATED_FLAG) {
+        keys.add(fullKey.slice(LS_PREFIX.length));
+      }
+    }
+  } catch (e) {}
+  return [...keys];
+}
+
+export async function hasLegacyLocalData() {
+  const keys = await collectLegacyLocalKeys();
+  return keys.length > 0;
+}
+
+/* 이 기기의 브라우저 저장소에 남아있는 데이터를 지금 로그인한 계정으로 옮긴다.
+   이미 계정에 값이 있는 키는 덮어쓰지 않는다 (계정 데이터가 우선). */
+export async function migrateLegacyLocalDataToAccount() {
+  if (!supabase || !currentUserId) return { migrated: 0, skipped: 0 };
+  const keys = await collectLegacyLocalKeys();
+  let migrated = 0;
+  let skipped = 0;
+  for (const key of keys) {
+    let value = null;
+    try {
+      value = await idbGet(key);
+    } catch (e) {}
+    if (value == null) value = lsGet(key);
+    if (value == null) continue;
+
+    const existing = await kvGetRemote(key);
+    if (existing != null) {
+      skipped++;
+      continue;
+    }
+    const ok = await kvSetRemote(key, value);
+    if (ok) migrated++;
+  }
+  return { migrated, skipped };
+}
+
 /* ---------- 진단용 ---------- */
 export async function storageInfo() {
+  if (supabase && currentUserId) {
+    const keys = await kvKeysRemote();
+    return { backend: "supabase", keyCount: keys.length, keys, quota: null };
+  }
+
   const backend = await pickBackend();
   let keys = [];
   if (backend === "idb") {
