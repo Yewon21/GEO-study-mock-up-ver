@@ -2858,7 +2858,11 @@ const NAV_ITEMS = [
   { key: "backup", label: "백업", icon: Download },
 ];
 
-function SideNav({ active, onNav }) {
+const SIDENAV_WIDTH = 232;
+const SIDENAV_COLLAPSED_WIDTH = 76;
+
+function SideNav({ active, onNav, collapsed, onToggleCollapsed }) {
+  const width = collapsed ? SIDENAV_COLLAPSED_WIDTH : SIDENAV_WIDTH;
   return (
     <nav
       style={{
@@ -2866,22 +2870,23 @@ function SideNav({ active, onNav }) {
         top: 0,
         left: 0,
         bottom: 0,
-        width: 232,
+        width,
         background: "rgba(255,255,255,0.72)",
         backdropFilter: "blur(18px)",
         WebkitBackdropFilter: "blur(18px)",
         borderRight: `1px solid ${C.line}`,
-        padding: "34px 16px",
+        padding: collapsed ? "34px 12px" : "34px 16px",
         boxSizing: "border-box",
         display: "flex",
         flexDirection: "column",
         gap: 4,
         zIndex: 40,
+        transition: "width 160ms ease, padding 160ms ease",
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 11, padding: "0 8px 26px" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: collapsed ? "center" : "flex-start", gap: 11, padding: collapsed ? "0 0 26px" : "0 8px 26px" }}>
         <Orb hue="blue" icon={Globe2} size={34} />
-        <span style={{ fontFamily: FONT_SERIF, fontSize: 18, letterSpacing: "-0.01em", color: C.ink }}>지리 암기 노트</span>
+        {!collapsed && <span style={{ fontFamily: FONT_SERIF, fontSize: 18, letterSpacing: "-0.01em", color: C.ink, whiteSpace: "nowrap" }}>지리 암기 노트</span>}
       </div>
       {NAV_ITEMS.map((item) => {
         const Icon = item.icon;
@@ -2890,9 +2895,11 @@ function SideNav({ active, onNav }) {
           <button
             key={item.key}
             onClick={() => onNav(item.key)}
+            title={collapsed ? item.label : undefined}
             style={{
               display: "flex",
               alignItems: "center",
+              justifyContent: collapsed ? "center" : "flex-start",
               gap: 12,
               width: "100%",
               textAlign: "left",
@@ -2900,7 +2907,7 @@ function SideNav({ active, onNav }) {
               color: on ? "#fff" : C.inkSoft,
               border: "none",
               borderRadius: 999,
-              padding: "12px 16px",
+              padding: collapsed ? "12px" : "12px 16px",
               cursor: "pointer",
               fontFamily: FONT_SANS,
               fontSize: 14,
@@ -2910,10 +2917,29 @@ function SideNav({ active, onNav }) {
             }}
           >
             <Icon size={17} />
-            {item.label}
+            {!collapsed && item.label}
           </button>
         );
       })}
+      <button
+        onClick={onToggleCollapsed}
+        title={collapsed ? "펼치기" : "접기"}
+        style={{
+          marginTop: "auto",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          width: "100%",
+          background: "transparent",
+          border: "none",
+          borderRadius: 999,
+          padding: "10px",
+          cursor: "pointer",
+          color: C.inkFaint,
+        }}
+      >
+        {collapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
+      </button>
     </nav>
   );
 }
@@ -2978,18 +3004,21 @@ function TabBar({ active, onNav }) {
 }
 
 function AppShell({ active, onNav, vp, children, fullBleed }) {
+  const [collapsed, setCollapsed] = useState(false);
   const sidebar = !vp.isPhone;
+  const sidebarWidth = collapsed ? SIDENAV_COLLAPSED_WIDTH : SIDENAV_WIDTH;
   return (
     <div style={{ background: C.pageBg, backgroundAttachment: "fixed", minHeight: "100vh", fontFamily: FONT_SANS, position: "relative" }}>
       <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 340, background: C.heroGlow, pointerEvents: "none" }} />
-      {sidebar ? <SideNav active={active} onNav={onNav} /> : <TabBar active={active} onNav={onNav} />}
+      {sidebar ? <SideNav active={active} onNav={onNav} collapsed={collapsed} onToggleCollapsed={() => setCollapsed((v) => !v)} /> : <TabBar active={active} onNav={onNav} />}
       <div
         style={{
           position: "relative",
-          marginLeft: sidebar ? 232 : 0,
+          marginLeft: sidebar ? sidebarWidth : 0,
           padding: fullBleed ? 0 : sidebar ? "40px 40px 64px" : "28px 18px 104px",
           boxSizing: "border-box",
           minHeight: sidebar ? "100vh" : undefined,
+          transition: "margin-left 160ms ease",
         }}
       >
         {fullBleed ? children : <div style={{ maxWidth: vp.isDesktop ? 1120 : vp.wide ? 880 : 640, margin: "0 auto" }}>{children}</div>}
