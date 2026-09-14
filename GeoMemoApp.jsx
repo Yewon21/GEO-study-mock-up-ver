@@ -140,22 +140,22 @@ const CONTINENT_COLORS = {
 
 const ZOOM_REGIONS = [{"key": "world", "label": "전체 보기", "viewBox": "0 0 2000 857"}, {"key": "africa", "label": "아프리카", "viewBox": "815 225 555 537"}, {"key": "monsoon", "label": "몬순아시아", "viewBox": "1283 128 531 473"}, {"key": "swasia", "label": "서남아시아·중앙아시아", "viewBox": "1104 127 333 316"}, {"key": "latin", "label": "라틴아메리카", "viewBox": "328 247 488 610"}, {"key": "anglo", "label": "앵글로아메리카", "viewBox": "59 0 760 411"}, {"key": "europe", "label": "유럽", "viewBox": "530 0 1320 458"}];
 
-function MiniWorldMap({ activeKey, highlightKeys = [], onSelectCountry, viewBox = "0 0 2000 857" }) {
+function MiniWorldMap({ activeKey, highlightKeys = [], onSelectCountry, viewBox = "0 0 2000 857", ghost = false }) {
   const activeSvgName = activeKey ? (EN_TO_SVGNAME[activeKey] || activeKey) : null;
   const highlightSvgNames = new Set((highlightKeys || []).map((k) => EN_TO_SVGNAME[k] || k));
   return (
-    <svg viewBox={viewBox} style={{ width: "100%", height: "auto", display: "block", background: "#FFFFFF", borderRadius: 14 }}>
+    <svg viewBox={viewBox} style={{ width: "100%", height: "auto", display: "block", background: ghost ? "transparent" : "#FFFFFF", borderRadius: ghost ? 0 : 14 }}>
       {Object.entries(WORLD_PATHS).map(([name, ds]) => {
         const isActive = name === activeSvgName;
         const isNoted = highlightSvgNames.has(name);
         const regionColor = CONTINENT_COLORS[WORLD_CONTINENT[name]] || "#B5B4B8";
-        const fill = isActive || isNoted ? regionColor : "#FFFFFF";
-        const fillOpacity = isActive ? 1 : isNoted ? 0.45 : 1;
+        const fill = ghost ? (isActive || isNoted ? regionColor : "none") : isActive || isNoted ? regionColor : "#FFFFFF";
+        const fillOpacity = isActive ? 1 : isNoted ? (ghost ? 0.55 : 0.45) : 1;
         const key = SVGNAME_TO_EN[name] || name;
         return (
           <g key={name} onClick={onSelectCountry ? () => onSelectCountry(key) : undefined} style={{ cursor: onSelectCountry ? "pointer" : "default" }}>
             {ds.map((d, i) => (
-              <path key={i} d={d} fill={fill} fillOpacity={fillOpacity} stroke="#232320" strokeWidth={0.6} strokeLinejoin="round" />
+              <path key={i} d={d} fill={fill} fillOpacity={fillOpacity} stroke={ghost ? "#C9C8CD" : "#232320"} strokeWidth={ghost ? 0.5 : 0.6} strokeLinejoin="round" />
             ))}
             <title>{name}</title>
           </g>
@@ -1651,18 +1651,41 @@ function MapWorkspace({ vp, selectedCountry, notes, notedKeys, onSelectCountry, 
   const [query, setQuery] = useState("");
   const [expanded, setExpanded] = useState(null);
   const [zoomKey, setZoomKey] = useState("world");
+  const [railOpen, setRailOpen] = useState(false);
   const panelWidth = vp.isDesktop ? 400 : 360;
 
   return (
     <div style={{ display: "flex", minHeight: "100vh" }}>
-      {vp.isDesktop && <MapContinentRail query={query} setQuery={setQuery} expanded={expanded} setExpanded={setExpanded} notedKeys={notedKeys} onSelectCountry={onSelectCountry} />}
+      {vp.isDesktop && railOpen && (
+        <div style={{ position: "relative" }}>
+          <MapContinentRail query={query} setQuery={setQuery} expanded={expanded} setExpanded={setExpanded} notedKeys={notedKeys} onSelectCountry={onSelectCountry} />
+          <button
+            onClick={() => setRailOpen(false)}
+            title="목록 닫기"
+            style={{ position: "absolute", top: 24, right: -14, width: 28, height: 28, borderRadius: "50%", background: "#fff", boxShadow: C.shadow, border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: C.inkSoft }}
+          >
+            <ChevronLeft size={15} />
+          </button>
+        </div>
+      )}
+      {vp.isDesktop && !railOpen && (
+        <button
+          onClick={() => setRailOpen(true)}
+          title="대륙·국가 목록 열기"
+          style={{ width: 28, flexShrink: 0, alignSelf: "stretch", background: "transparent", border: "none", borderRight: `1px solid ${C.line}`, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: C.inkFaint }}
+        >
+          <ChevronRight size={15} />
+        </button>
+      )}
 
       <div style={{ flex: 1, minWidth: 0, position: "relative", padding: "34px", boxSizing: "border-box", overflowY: "auto" }}>
         <div style={{ marginBottom: 16 }}>
           <h1 style={{ fontFamily: FONT_SERIF, fontWeight: 500, fontSize: 28, color: C.ink, margin: 0 }}>지도 필기</h1>
           <p style={{ fontFamily: FONT_SANS, fontSize: 12.5, color: C.inkSoft, margin: "6px 0 16px" }}>나라를 골라서 기후·지형·인문·지역지리 내용을 정리해요.</p>
-          <div style={{ maxWidth: 320 }}>
-            <ZoomControl zoomKey={zoomKey} onChange={setZoomKey} />
+          <div style={{ display: "flex", alignItems: "center", gap: 10, maxWidth: 420 }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <ZoomControl zoomKey={zoomKey} onChange={setZoomKey} />
+            </div>
           </div>
         </div>
 
@@ -2061,24 +2084,20 @@ function FoldersScreen({ wide, isDesktop, subject, folders, cardsByFolder, dueCo
 
         <RecentMapNotes mapNotesByCountry={mapNotesByCountry} onOpenMapCountry={onOpenMapCountry} />
 
-        <button
+        <div
           onClick={onOpenMap}
           style={{
-            display: "block",
-            width: "100%",
             marginTop: 20,
-            background: "repeating-linear-gradient(135deg, #e7e7ea 0 8px, #f1f1f4 8px 16px)",
-            border: "none",
+            padding: "16px 16px 12px",
             borderRadius: 18,
-            height: 120,
+            border: `1px solid ${C.line}`,
+            background: "rgba(255,255,255,0.5)",
             cursor: "pointer",
-            fontFamily: "ui-monospace, Menlo, monospace",
-            fontSize: 11,
-            color: C.inkSoft,
           }}
         >
-          세계지도 미니맵 →
-        </button>
+          <MiniWorldMap ghost highlightKeys={Object.keys(mapNotesByCountry || {}).filter((k) => MAP_TAGS.some((t) => (mapNotesByCountry[k][t.key] || []).length > 0))} />
+          <div style={{ fontFamily: FONT_SANS, fontSize: 12, color: C.inkSoft, marginTop: 8, textAlign: "right" }}>세계지도 열기 →</div>
+        </div>
       </aside>
     )}
     </div>
