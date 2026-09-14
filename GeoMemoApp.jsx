@@ -2886,7 +2886,7 @@ function SideNav({ active, onNav, collapsed, onToggleCollapsed }) {
     >
       <div style={{ display: "flex", alignItems: "center", justifyContent: collapsed ? "center" : "flex-start", gap: 11, padding: collapsed ? "0 0 26px" : "0 8px 26px" }}>
         <Orb hue="blue" icon={Globe2} size={34} />
-        {!collapsed && <span style={{ fontFamily: FONT_SERIF, fontSize: 18, letterSpacing: "-0.01em", color: C.ink, whiteSpace: "nowrap" }}>지리 암기 노트</span>}
+        {!collapsed && <span style={{ fontFamily: FONT_SERIF, fontWeight: 700, fontSize: 18, letterSpacing: "-0.01em", color: C.ink, whiteSpace: "nowrap" }}>지리 암기 노트</span>}
       </div>
       {NAV_ITEMS.map((item) => {
         const Icon = item.icon;
