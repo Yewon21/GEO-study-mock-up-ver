@@ -86,6 +86,10 @@ const C = {
   heroGlow:
     "radial-gradient(60% 100% at 14% 0%, #cfe0ff 0%, rgba(207,224,255,0) 62%), " +
     "radial-gradient(50% 90% at 88% 0%, #ffd9c2 0%, rgba(255,217,194,0) 60%)",
+  quizGlow:
+    "radial-gradient(55% 70% at 20% 10%, #c9daff 0%, rgba(201,218,255,0) 68%), " +
+    "radial-gradient(50% 65% at 82% 8%, #f6cfe6 0%, rgba(246,207,230,0) 65%), " +
+    "radial-gradient(60% 60% at 50% 0%, #e2d6fb 0%, rgba(226,214,251,0) 70%)",
 };
 
 const ORB = {
@@ -262,6 +266,24 @@ function renderRich(text) {
     }
     return <React.Fragment key={i}>{part}</React.Fragment>;
   });
+}
+
+/* 자유형 문제에 "______" 같은 빈칸 표시가 있으면 밑줄 선으로 보여준다. */
+function renderQuestionWithBlank(text) {
+  const parts = String(text || "").split(/(_{3,})/g);
+  return parts.map((part, i) =>
+    /^_{3,}$/.test(part) ? (
+      <span key={i} style={{ display: "inline-block", width: "2.6em", borderBottom: "2px solid currentColor", verticalAlign: "middle", margin: "0 2px" }}>&nbsp;</span>
+    ) : (
+      <React.Fragment key={i}>{renderRich(part)}</React.Fragment>
+    )
+  );
+}
+
+/* 힌트: 정답의 첫 글자만 보여주고 나머지는 가린다. */
+function maskAnswer(raw) {
+  const s = stripMd(raw || "");
+  return s.split("").map((ch, i) => (ch === " " ? " " : i === 0 ? ch : "○")).join("");
 }
 
 /* ----------------------------------------------------------------
@@ -2384,7 +2406,7 @@ function buildQuizQueue(cardsWithFolder, count = 12) {
   });
 }
 
-function QuizScreen({ title, cardsWithFolder, showFolderLabel, rankingMode, capCount = 12, onFinish, onExit, onToggleFavorite, isDesktop }) {
+function QuizScreen({ title, subjectName, cardsWithFolder, showFolderLabel, rankingMode, capCount = 12, onFinish, onExit, onToggleFavorite, isDesktop }) {
   const initialQueue = useState(() => buildQuizQueue(cardsWithFolder, capCount))[0];
   const totalCount = initialQueue.length;
   const [pool, setPool] = useState(initialQueue);
@@ -2394,6 +2416,7 @@ function QuizScreen({ title, cardsWithFolder, showFolderLabel, rankingMode, capC
   const [singleInput, setSingleInput] = useState("");
   const [fullInputs, setFullInputs] = useState([]);
   const [favMap, setFavMap] = useState(() => Object.fromEntries(initialQueue.map((q) => [q.cardId, !!q.card.favorite])));
+  const [showHint, setShowHint] = useState(false);
   const inputRef = useRef(null);
   const finishedRef = useRef(false);
 
@@ -2402,6 +2425,7 @@ function QuizScreen({ title, cardsWithFolder, showFolderLabel, rankingMode, capC
 
   useEffect(() => {
     setSingleInput("");
+    setShowHint(false);
     if (current && isFullRanking) setFullInputs(current.card.items.map(() => ""));
     if (inputRef.current) inputRef.current.focus();
   }, [current && current.cardId, pool.length]);
@@ -2412,6 +2436,21 @@ function QuizScreen({ title, cardsWithFolder, showFolderLabel, rankingMode, capC
       onFinish(attempts);
     }
   }, [pool.length, attempts, onFinish]);
+
+  // 데스크톱 자유형 퀴즈: 스페이스바로 "모르겠어요" (입력창에 포커스가 없을 때만)
+  useEffect(() => {
+    if (!isDesktop || !current || current.type !== "freeform" || revealed) return;
+    const onKey = (e) => {
+      if (e.code === "Space" && document.activeElement !== inputRef.current) {
+        e.preventDefault();
+        setWasCorrect(false);
+        setRevealed(true);
+        setAttempts((a) => [...a, { folderId: current.folderId, cardId: current.cardId, correct: false }]);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [isDesktop, current && current.cardId, revealed]);
 
   if (totalCount === 0) {
     return (
@@ -2460,16 +2499,22 @@ function QuizScreen({ title, cardsWithFolder, showFolderLabel, rankingMode, capC
   };
 
   const masteredCount = totalCount - pool.length;
-  const focusMode = isDesktop && current.type === "freeform";
+  const sessionCorrect = attempts.filter((a) => a.correct).length;
+  const sessionTotal = attempts.length;
+  const skip = () => {
+    if (!revealed) recordAndAdvance(false);
+  };
 
-  if (focusMode) {
+  if (current.type === "freeform" && isDesktop) {
     return (
       <div style={{ position: "relative" }}>
+        <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 480, background: C.quizGlow, borderRadius: 32, pointerEvents: "none", zIndex: -1 }} />
+
         <div style={{ display: "flex", alignItems: "center", gap: 20, marginBottom: 40 }}>
           <RoundIconButton title="그만두기" onClick={onExit}>
             <X size={15} />
           </RoundIconButton>
-          <div style={{ flex: 1, height: 5, borderRadius: 3, background: C.fieldBg, overflow: "hidden" }}>
+          <div style={{ flex: 1, height: 5, borderRadius: 3, background: "rgba(255,255,255,0.6)", overflow: "hidden" }}>
             <div style={{ width: `${(masteredCount / totalCount) * 100}%`, height: "100%", background: C.ink }} />
           </div>
           <span style={{ fontFamily: FONT_SANS, fontSize: 13, color: C.inkSoft }}>{masteredCount} / {totalCount}</span>
@@ -2477,8 +2522,10 @@ function QuizScreen({ title, cardsWithFolder, showFolderLabel, rankingMode, capC
         </div>
 
         <div style={{ maxWidth: 840, margin: "0 auto" }}>
-          <div style={{ fontFamily: FONT_SANS, fontSize: 13, color: C.inkSoft, textAlign: "center" }}>{showFolderLabel ? current.folderName : title}</div>
-          <h2 style={{ fontFamily: FONT_SERIF, fontWeight: 500, fontSize: 38, lineHeight: 1.45, color: C.ink, textAlign: "center", margin: "20px 0 0" }}>{renderRich(current.card.question)}</h2>
+          <div style={{ fontFamily: FONT_SANS, fontSize: 13, color: C.inkSoft, textAlign: "center" }}>
+            {subjectName ? `${subjectName} · ` : ""}{showFolderLabel ? current.folderName : title} · 카드 {masteredCount + 1}
+          </div>
+          <h2 style={{ fontFamily: FONT_SERIF, fontWeight: 500, fontSize: 38, lineHeight: 1.45, color: C.ink, textAlign: "center", margin: "20px 0 0" }}>{renderQuestionWithBlank(current.card.question)}</h2>
           {current.card.photo && <img src={current.card.photo} alt="" style={{ display: "block", margin: "20px auto 0", maxHeight: 220, borderRadius: 16 }} />}
 
           {!revealed ? (
@@ -2495,13 +2542,22 @@ function QuizScreen({ title, cardsWithFolder, showFolderLabel, rankingMode, capC
                 <span style={{ fontFamily: FONT_SANS, fontSize: 12.5, color: C.inkFaint, padding: "7px 12px", borderRadius: 10, background: C.fieldBg, flexShrink: 0 }}>Enter 로 제출</span>
               </div>
               <div style={{ display: "flex", justifyContent: "center", gap: 10, marginTop: 18 }}>
+                <button onClick={() => setShowHint((v) => !v)} style={{ padding: "9px 16px", borderRadius: 18, background: "rgba(78,127,239,0.12)", border: "none", color: "#4E7FEF", fontFamily: FONT_SANS, fontSize: 13, cursor: "pointer" }}>
+                  힌트 보기
+                </button>
+                <button onClick={skip} style={{ padding: "9px 16px", borderRadius: 18, background: "rgba(255,255,255,0.85)", border: "none", color: C.inkSoft, fontFamily: FONT_SANS, fontSize: 13, cursor: "pointer" }}>
+                  모르겠어요 (Space)
+                </button>
                 <button
                   onClick={toggleFav}
                   style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 16px", borderRadius: 18, background: "rgba(255,255,255,0.85)", border: "none", color: C.star, fontFamily: FONT_SANS, fontSize: 13, cursor: "pointer" }}
                 >
-                  <Star size={14} fill={isFav ? C.star : "none"} /> {isFav ? "다시보기 해제" : "다시보기로 표시"}
+                  <Star size={14} fill={isFav ? C.star : "none"} /> 즐겨찾기
                 </button>
               </div>
+              {showHint && (
+                <p style={{ textAlign: "center", fontFamily: "ui-monospace, Menlo, monospace", fontSize: 13, color: C.inkFaint, marginTop: 16 }}>힌트 · {maskAnswer(current.card.answer)}</p>
+              )}
             </div>
           ) : (
             <div>
@@ -2509,12 +2565,13 @@ function QuizScreen({ title, cardsWithFolder, showFolderLabel, rankingMode, capC
                 <div style={{ fontFamily: FONT_SANS, fontSize: 15, fontWeight: 500, color: wasCorrect ? C.correct : C.wrong }}>
                   {wasCorrect ? `✓ 정답 처리 · ${singleInput}` : "✕ 오답"}
                 </div>
-                <div style={{ fontFamily: FONT_SANS, fontSize: 14, color: "#3d6f52", lineHeight: 1.7, marginTop: 8 }}>
+                <div style={{ fontFamily: FONT_SANS, fontSize: 14, color: wasCorrect ? "#3d6f52" : "#8a3d2f", lineHeight: 1.7, marginTop: 8 }}>
                   모범 답안: <strong>{renderRich(current.card.answer)}</strong>
-                  {!wasCorrect && <span> · 내 답변: {singleInput}</span>}
+                  {!wasCorrect && singleInput && <span> · 내 답변: {singleInput}</span>}
                 </div>
               </div>
-              <div style={{ display: "flex", justifyContent: "center", marginTop: 24 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 24 }}>
+                <span style={{ fontFamily: FONT_SANS, fontSize: 13, color: C.inkSoft }}>이번 세션 {sessionCorrect} / {sessionTotal} 정답</span>
                 <button
                   onClick={goNext}
                   style={{ height: 48, padding: "0 28px", borderRadius: 24, background: C.ink, color: "#fff", border: "none", fontFamily: FONT_SANS, fontSize: 14.5, fontWeight: 500, cursor: "pointer", boxShadow: "0 10px 26px rgba(20,20,25,0.2)" }}
@@ -2529,16 +2586,96 @@ function QuizScreen({ title, cardsWithFolder, showFolderLabel, rankingMode, capC
     );
   }
 
+  if (current.type === "freeform" && !isDesktop) {
+    return (
+      <div>
+        <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 14 }}>
+          <RoundIconButton title="그만두기" onClick={onExit}>
+            <X size={15} />
+          </RoundIconButton>
+          <div style={{ flex: 1, height: 5, borderRadius: 3, background: C.fieldBg, overflow: "hidden" }}>
+            <div style={{ width: `${(masteredCount / totalCount) * 100}%`, height: "100%", background: C.ink }} />
+          </div>
+          <span style={{ fontFamily: FONT_SANS, fontSize: 12.5, color: C.inkSoft, flexShrink: 0 }}>{masteredCount} / {totalCount}</span>
+        </div>
+        <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+          <span style={{ fontFamily: FONT_SANS, fontSize: 12, color: C.inkSoft, background: C.fieldBg, padding: "6px 12px", borderRadius: 999 }}>{showFolderLabel ? current.folderName : title}</span>
+          <span style={{ fontFamily: FONT_SANS, fontSize: 12, color: C.inkSoft, background: C.fieldBg, padding: "6px 12px", borderRadius: 999 }}>주관식 입력</span>
+        </div>
+
+        <Card style={{ padding: 22 }}>
+          <p style={{ fontFamily: FONT_SANS, fontSize: 12.5, color: C.inkFaint, margin: "0 0 12px" }}>빈칸에 들어갈 말을 직접 입력하세요</p>
+          <h2 style={{ fontFamily: FONT_SERIF, fontWeight: 500, fontSize: 21, lineHeight: 1.5, color: C.ink, margin: "0 0 18px" }}>{renderQuestionWithBlank(current.card.question)}</h2>
+          {current.card.photo && <img src={current.card.photo} alt="" style={{ maxWidth: "100%", maxHeight: 200, borderRadius: 16, marginBottom: 16, display: "block" }} />}
+
+          {!revealed && (
+            <div>
+              <input
+                ref={inputRef}
+                value={singleInput}
+                onChange={(e) => setSingleInput(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && checkSingle()}
+                placeholder="답을 입력하세요"
+                style={{ width: "100%", fontFamily: FONT_SANS, fontSize: 16, color: C.ink, background: "#fff", border: `1.5px solid ${C.ink}`, borderRadius: 18, padding: "13px 16px", boxSizing: "border-box", outline: "none", marginBottom: 12 }}
+              />
+              <div style={{ display: "flex", gap: 8 }}>
+                <button onClick={() => setShowHint((v) => !v)} style={{ padding: "8px 14px", borderRadius: 16, border: "none", background: "#EDF2FE", color: "#4E7FEF", fontFamily: FONT_SANS, fontSize: 12.5, cursor: "pointer" }}>
+                  힌트 보기
+                </button>
+                <button onClick={skip} style={{ padding: "8px 14px", borderRadius: 16, border: "none", background: C.fieldBg, color: C.inkSoft, fontFamily: FONT_SANS, fontSize: 12.5, cursor: "pointer" }}>
+                  모르겠어요
+                </button>
+              </div>
+              {showHint && (
+                <p style={{ fontFamily: "ui-monospace, Menlo, monospace", fontSize: 12.5, color: C.inkFaint, margin: "10px 0 0" }}>힌트 · {maskAnswer(current.card.answer)}</p>
+              )}
+            </div>
+          )}
+        </Card>
+
+        {revealed && (
+          <Card style={{ padding: "18px 20px", marginTop: 12, background: wasCorrect ? C.correctBg : C.wrongBg }}>
+            <div style={{ fontFamily: FONT_SANS, fontSize: 14.5, fontWeight: 500, color: wasCorrect ? C.correct : C.wrong }}>
+              {wasCorrect ? `✓ 정답 처리 · ${singleInput}` : "✕ 오답"}
+            </div>
+            <div style={{ fontFamily: FONT_SANS, fontSize: 13, color: wasCorrect ? "#3d6f52" : "#8a3d2f", lineHeight: 1.7, marginTop: 6 }}>
+              모범 답안: <strong>{renderRich(current.card.answer)}</strong>
+              {!wasCorrect && singleInput && <span> · 내 답변: {singleInput}</span>}
+            </div>
+          </Card>
+        )}
+
+        {revealed && (
+          <Card style={{ padding: "13px 18px", marginTop: 12, textAlign: "center" }}>
+            <span style={{ fontFamily: FONT_SANS, fontSize: 13, color: C.inkSoft }}>이번 세션 {sessionCorrect} / {sessionTotal} 정답</span>
+          </Card>
+        )}
+
+        <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
+          <RoundIconButton title={isFav ? "다시보기 해제" : "다시보기로 표시"} tone={isFav ? "star" : "default"} onClick={toggleFav}>
+            <Star size={15} fill={isFav ? C.star : "none"} />
+          </RoundIconButton>
+          <PillButton full onClick={revealed ? goNext : checkSingle} style={{ flex: 1 }}>
+            {revealed ? "다음 문제 →" : "확인"}
+          </PillButton>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div style={{ maxWidth: 520, margin: "0 auto" }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 18 }}>
-        <BackRow onBack={onExit} label="그만두기" />
-        <span style={{ fontFamily: FONT_SANS, fontSize: 12, color: C.inkFaint, marginTop: -20 }}>정복 {masteredCount} / {totalCount}</span>
+      <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 18 }}>
+        <RoundIconButton title="그만두기" onClick={onExit}>
+          <X size={15} />
+        </RoundIconButton>
+        <div style={{ flex: 1, height: 6, borderRadius: 3, background: C.fieldBg, overflow: "hidden" }}>
+          <div style={{ width: `${Math.round((masteredCount / totalCount) * 100)}%`, height: "100%", background: C.correct, borderRadius: 3, transition: "width 0.3s ease" }} />
+        </div>
+        <span style={{ fontFamily: FONT_SANS, fontSize: 12.5, color: C.inkSoft, flexShrink: 0 }}>{masteredCount} / {totalCount}</span>
       </div>
 
-      <ProgressBar value={masteredCount / totalCount} tone="green" />
-
-      <Card style={{ padding: 24, marginTop: 16 }}>
+      <Card style={{ padding: 24 }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
           <span style={{ fontFamily: FONT_SANS, fontSize: 12, color: C.inkFaint, background: C.fieldBg, padding: "4px 10px", borderRadius: 999 }}>{showFolderLabel ? current.folderName : title}</span>
           <RoundIconButton title={isFav ? "다시보기 해제" : "다시보기로 표시"} tone={isFav ? "star" : "default"} onClick={toggleFav}>
@@ -2656,7 +2793,9 @@ function QuizSummaryScreen({ results, onRetry, onExit }) {
   return (
     <div style={{ maxWidth: 480, margin: "0 auto" }}>
       <Card style={{ padding: "40px 28px", textAlign: "center" }}>
-        <Orb hue={ratio >= 0.7 ? "blue" : "orange"} size={64} letter="✓" />
+        <div style={{ width: 56, height: 56, borderRadius: "50%", background: ORB[ratio >= 0.7 ? "blue" : "orange"], display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto" }}>
+          <Check size={26} color="#fff" strokeWidth={2.5} />
+        </div>
         <p style={{ fontFamily: FONT_SANS, fontSize: 13, color: C.inkFaint, margin: "20px 0 4px" }}>전부 정복!</p>
         <h2 style={{ fontFamily: FONT_SERIF, fontWeight: 500, fontSize: 30, color: C.ink, margin: "0 0 6px" }}>{uniqueIds.length}개 카드</h2>
         <p style={{ fontFamily: FONT_SANS, fontSize: 13, color: C.inkSoft, margin: "0 0 20px" }}>
@@ -3284,6 +3423,7 @@ export default function GeoMemoApp() {
     return wrap(
       <QuizScreen
         title={title}
+        subjectName={SUBJECTS.find((s) => s.id === subject)?.name}
         cardsWithFolder={cardsWithFolder}
         showFolderLabel={screen.dueOnly || folderIds.length > 1}
         rankingMode={screen.rankingMode}
