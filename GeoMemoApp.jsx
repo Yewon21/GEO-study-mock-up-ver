@@ -98,7 +98,7 @@ const ORB = {
   green: "radial-gradient(circle at 32% 28%, #A8E0B8 0%, #4CAF6E 62%, #2E8B4F 100%)",
 };
 
-const FONT_SERIF = "'Nanum Myeongjo', 'AppleMyungjo', 'Batang', serif";
+const FONT_SERIF = "'Noto Sans KR', 'Apple SD Gothic Neo', -apple-system, BlinkMacSystemFont, sans-serif";
 const FONT_SANS = "'Noto Sans KR', 'Apple SD Gothic Neo', -apple-system, BlinkMacSystemFont, sans-serif";
 
 const SUBJECTS = [
@@ -155,7 +155,7 @@ function MiniWorldMap({ activeKey, highlightKeys = [], onSelectCountry, viewBox 
         return (
           <g key={name} onClick={onSelectCountry ? () => onSelectCountry(key) : undefined} style={{ cursor: onSelectCountry ? "pointer" : "default" }}>
             {ds.map((d, i) => (
-              <path key={i} d={d} fill={fill} fillOpacity={fillOpacity} stroke={ghost ? "#C9C8CD" : "#232320"} strokeWidth={ghost ? 0.5 : 0.6} strokeLinejoin="round" />
+              <path key={i} d={d} fill={fill} fillOpacity={fillOpacity} stroke={ghost ? "#8B8A8E" : "#232320"} strokeWidth={ghost ? 0.7 : 0.6} strokeLinejoin="round" />
             ))}
             <title>{name}</title>
           </g>
