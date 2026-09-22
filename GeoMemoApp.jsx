@@ -289,6 +289,10 @@ function uid() {
   return "id-" + Math.random().toString(36).slice(2) + Date.now().toString(36);
 }
 
+function anyNoted(obj) {
+  return Object.values(obj || {}).some((arr) => (arr || []).length > 0);
+}
+
 function compressImage(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -1118,6 +1122,10 @@ function NoteEntryForm({ folders, cardsByFolder, onSave, onCancel, initial }) {
     });
   };
 
+  const handleSave = () => {
+    if (text.trim()) onSave({ text: text.trim(), link });
+  };
+
   return (
     <Card style={{ padding: 14 }}>
       <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 6 }}>
@@ -1130,6 +1138,12 @@ function NoteEntryForm({ folders, cardsByFolder, onSave, onCancel, initial }) {
         autoFocus
         value={text}
         onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+            e.preventDefault();
+            handleSave();
+          }
+        }}
         placeholder="내용을 입력하세요"
         style={{ width: "100%", fontFamily: FONT_SANS, fontSize: 14, color: C.ink, background: C.fieldBg, border: "none", borderRadius: 14, padding: "12px 14px", boxSizing: "border-box", outline: "none", resize: "vertical", minHeight: 70, marginBottom: 10 }}
       />
@@ -1152,7 +1166,7 @@ function NoteEntryForm({ folders, cardsByFolder, onSave, onCancel, initial }) {
         </button>
       )}
       <div style={{ display: "flex", gap: 8 }}>
-        <PillButton onClick={() => text.trim() && onSave({ text: text.trim(), link })}>{initial ? "수정 완료" : "저장"}</PillButton>
+        <PillButton onClick={handleSave}>{initial ? "수정 완료" : "저장"}</PillButton>
         <PillButton tone="secondary" onClick={onCancel}>취소</PillButton>
       </div>
       {showPicker && (
@@ -1944,14 +1958,12 @@ function KoreaRegionRail({ query, setQuery, expanded, setExpanded, notedKeys, on
 
 function CountryNotesPanel({ countryKey, notes, onAddEntry, onDeleteEntry, onUpdateEntry, onSelectCountry, folders, cardsByFolder, width = 394, isKorea = false }) {
   const tagList = isKorea ? KOREA_MAP_TAGS : MAP_TAGS;
-  const [activeTag, setActiveTag] = useState(tagList[0].key);
-  const [adding, setAdding] = useState(false);
+  const [addingTag, setAddingTag] = useState(null);
   const [editingId, setEditingId] = useState(null);
   const [expandedLinks, setExpandedLinks] = useState(() => new Set());
 
   useEffect(() => {
-    setActiveTag(tagList[0].key);
-    setAdding(false);
+    setAddingTag(null);
     setEditingId(null);
   }, [countryKey]);
 
@@ -1962,8 +1974,6 @@ function CountryNotesPanel({ countryKey, notes, onAddEntry, onDeleteEntry, onUpd
   const koreaInfo = isKorea ? KOREA_INFO[countryKey] : null;
   const flag = geoInfo ? flagEmoji(geoInfo.iso) : "";
   const totalNotes = tagList.reduce((s, t) => s + (notes[t.key] || []).length, 0);
-  const activeMeta = tagList.find((t) => t.key === activeTag);
-  const entries = notes[activeTag] || [];
 
   const findEnByKo = (ko) => {
     const found = COUNTRIES.find((c) => c.ko === ko);
@@ -1994,7 +2004,7 @@ function CountryNotesPanel({ countryKey, notes, onAddEntry, onDeleteEntry, onUpd
   }
 
   return (
-    <aside style={{ width, flexShrink: 0, background: "#fff", padding: "30px 26px 100px", boxSizing: "border-box", boxShadow: "-10px 0 40px rgba(20,20,25,0.05)", position: "relative", overflowY: "auto" }}>
+    <aside style={{ width, flexShrink: 0, background: "#fff", padding: "30px 26px 40px", boxSizing: "border-box", boxShadow: "-10px 0 40px rgba(20,20,25,0.05)", position: "relative", overflowY: "auto" }}>
       <span style={{ fontFamily: FONT_SANS, fontSize: 12, color: C.inkSoft, padding: "6px 12px", borderRadius: 14, background: C.fieldBg }}>
         {isKorea ? KOREA_GROUPS[KOREA_MUNI_PROVINCE[countryKey]] || "" : meta ? meta.continent : ""} · 노트 {totalNotes}
       </span>
@@ -2002,104 +2012,92 @@ function CountryNotesPanel({ countryKey, notes, onAddEntry, onDeleteEntry, onUpd
         {flag && <span style={{ marginRight: 8 }}>{flag}</span>}
         {koName}
       </div>
-      <div style={{ fontFamily: FONT_SANS, fontSize: 13, color: C.inkSoft }}>
+      <div style={{ fontFamily: FONT_SANS, fontSize: 13, color: C.inkSoft, marginBottom: 20 }}>
         {isKorea ? "" : countryKey}
         {capitalInfo && ` · 수도 ${capitalInfo[0]}`}
         {capitalInfo && capitalInfo[1] ? ` · 최대도시 ${capitalInfo[1]}` : ""}
         {koreaInfo && `${KOREA_MUNI_PROVINCE[countryKey] || ""} · ${koreaInfo.capitalSeat ? "도청 소재지" : koreaInfo.innovationCity ? `혁신도시(${koreaInfo.innovationCity})` : ""}${koreaInfo.population != null ? ` · 인구 ${koreaInfo.population.toLocaleString()}명` : ""}`}
       </div>
 
-      <div style={{ display: "flex", gap: 7, margin: "20px 0 14px", flexWrap: "wrap" }}>
-        {tagList.map((tag) => (
-          <button
-            key={tag.key}
-            onClick={() => {
-              setActiveTag(tag.key);
-              setAdding(false);
-              setEditingId(null);
-            }}
-            style={{
-              padding: "7px 13px",
-              borderRadius: 16,
-              border: "none",
-              cursor: "pointer",
-              background: activeTag === tag.key ? tag.color : C.fieldBg,
-              color: activeTag === tag.key ? "#fff" : tag.color,
-              fontFamily: FONT_SANS,
-              fontSize: 12.5,
-            }}
-          >
-            {tag.label}
-          </button>
-        ))}
-      </div>
+      {tagList.map((tag) => {
+        const entries = notes[tag.key] || [];
+        return (
+          <div key={tag.key} style={{ marginBottom: 24 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+              <span style={{ width: 10, height: 10, borderRadius: "50%", background: tag.color, flexShrink: 0 }} />
+              <span style={{ fontFamily: FONT_SANS, fontSize: 14, fontWeight: 500, color: C.ink }}>{tag.label}</span>
+            </div>
 
-      {entries.length === 0 && !adding && (
-        <div style={{ background: C.fieldBg, borderRadius: 20, padding: 18, marginBottom: 12 }}>
-          <p style={{ fontFamily: FONT_SANS, fontSize: 13, color: C.inkFaint, margin: 0 }}>아직 "{activeMeta.label}" 내용이 없어요.</p>
-        </div>
-      )}
-
-      {entries.length > 0 && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 12 }}>
-          {entries.map((entry) => {
-            const isExpanded = expandedLinks.has(entry.id);
-            if (editingId === entry.id) {
-              return (
-                <NoteEntryForm
-                  key={entry.id}
-                  folders={folders}
-                  cardsByFolder={cardsByFolder}
-                  initial={entry}
-                  onCancel={() => setEditingId(null)}
-                  onSave={(data) => {
-                    onUpdateEntry(activeTag, entry.id, data);
-                    setEditingId(null);
-                  }}
-                />
-              );
-            }
-            return (
-              <div key={entry.id} style={{ background: C.fieldBg, borderRadius: 20, padding: 18 }}>
-                <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
-                  <p style={{ fontFamily: FONT_SANS, fontSize: 14.5, color: C.ink, margin: 0, lineHeight: 1.7, flex: 1 }}>{renderRich(entry.text)}</p>
-                  <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
-                    {entry.link && (
-                      <RoundIconButton title={isExpanded ? "카드 내용 접기" : `연결된 카드 보기: ${entry.link.cardLabel}`} tone={isExpanded ? "star" : "default"} onClick={() => toggleLink(entry.id)}>
-                        <Link2 size={13} />
-                      </RoundIconButton>
-                    )}
-                    <RoundIconButton title="수정" onClick={() => { setEditingId(entry.id); setAdding(false); }}>
-                      <Pencil size={13} />
-                    </RoundIconButton>
-                    <RoundIconButton title="삭제" tone="danger" onClick={() => onDeleteEntry(activeTag, entry.id)}>
-                      <Trash2 size={13} />
-                    </RoundIconButton>
-                  </div>
-                </div>
-                {entry.link && isExpanded && (
-                  <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${C.line}` }}>
-                    <p style={{ fontFamily: FONT_SANS, fontSize: 11, color: C.inkFaint, margin: "0 0 8px" }}>{entry.link.folderName}</p>
-                    <LinkedCardPreview card={findLinkedCard(entry.link)} />
-                  </div>
-                )}
+            {entries.length > 0 && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 8 }}>
+                {entries.map((entry) => {
+                  const isExpanded = expandedLinks.has(entry.id);
+                  if (editingId === entry.id) {
+                    return (
+                      <NoteEntryForm
+                        key={entry.id}
+                        folders={folders}
+                        cardsByFolder={cardsByFolder}
+                        initial={entry}
+                        onCancel={() => setEditingId(null)}
+                        onSave={(data) => {
+                          onUpdateEntry(tag.key, entry.id, data);
+                          setEditingId(null);
+                        }}
+                      />
+                    );
+                  }
+                  return (
+                    <div key={entry.id} style={{ background: C.fieldBg, borderRadius: 20, padding: 18 }}>
+                      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
+                        <p style={{ fontFamily: FONT_SANS, fontSize: 14.5, color: C.ink, margin: 0, lineHeight: 1.7, flex: 1 }}>{renderRich(entry.text)}</p>
+                        <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
+                          {entry.link && (
+                            <RoundIconButton title={isExpanded ? "카드 내용 접기" : `연결된 카드 보기: ${entry.link.cardLabel}`} tone={isExpanded ? "star" : "default"} onClick={() => toggleLink(entry.id)}>
+                              <Link2 size={13} />
+                            </RoundIconButton>
+                          )}
+                          <RoundIconButton title="수정" onClick={() => { setEditingId(entry.id); setAddingTag(null); }}>
+                            <Pencil size={13} />
+                          </RoundIconButton>
+                          <RoundIconButton title="삭제" tone="danger" onClick={() => onDeleteEntry(tag.key, entry.id)}>
+                            <Trash2 size={13} />
+                          </RoundIconButton>
+                        </div>
+                      </div>
+                      {entry.link && isExpanded && (
+                        <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${C.line}` }}>
+                          <p style={{ fontFamily: FONT_SANS, fontSize: 11, color: C.inkFaint, margin: "0 0 8px" }}>{entry.link.folderName}</p>
+                          <LinkedCardPreview card={findLinkedCard(entry.link)} />
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
-            );
-          })}
-        </div>
-      )}
+            )}
 
-      {adding ? (
-        <NoteEntryForm
-          folders={folders}
-          cardsByFolder={cardsByFolder}
-          onCancel={() => setAdding(false)}
-          onSave={(data) => {
-            onAddEntry(activeTag, data);
-            setAdding(false);
-          }}
-        />
-      ) : null}
+            {addingTag === tag.key ? (
+              <NoteEntryForm
+                folders={folders}
+                cardsByFolder={cardsByFolder}
+                onCancel={() => setAddingTag(null)}
+                onSave={(data) => {
+                  onAddEntry(tag.key, data);
+                  setAddingTag(null);
+                }}
+              />
+            ) : (
+              <button
+                onClick={() => { setAddingTag(tag.key); setEditingId(null); }}
+                style={{ display: "flex", alignItems: "center", gap: 6, background: "transparent", border: "none", color: C.inkSoft, fontFamily: FONT_SANS, fontSize: 13, cursor: "pointer", padding: 0 }}
+              >
+                <Plus size={14} /> {tag.label} 내용 추가
+              </button>
+            )}
+          </div>
+        );
+      })}
 
       {geoInfo && geoInfo.borders.length > 0 && (
         <div style={{ marginTop: 16 }}>
@@ -2124,31 +2122,6 @@ function CountryNotesPanel({ countryKey, notes, onAddEntry, onDeleteEntry, onUpd
           </div>
         </div>
       )}
-
-      {!adding && !editingId && (
-        <button
-          onClick={() => setAdding(true)}
-          style={{
-            position: "sticky",
-            bottom: 0,
-            left: 0,
-            width: "100%",
-            marginTop: 20,
-            height: 52,
-            borderRadius: 26,
-            background: C.ink,
-            color: "#fff",
-            border: "none",
-            fontFamily: FONT_SANS,
-            fontSize: 14.5,
-            fontWeight: 500,
-            cursor: "pointer",
-            boxShadow: "0 10px 26px rgba(20,20,25,0.2)",
-          }}
-        >
-          ＋ {activeMeta.label} 필기 추가
-        </button>
-      )}
     </aside>
   );
 }
@@ -2160,8 +2133,13 @@ function MapWorkspace({ vp, selectedCountry, notes, notedKeys, onSelectCountry, 
   const [zoomKey, setZoomKey] = useState("world");
   const [koreaZoomKey, setKoreaZoomKey] = useState("all");
   const [railOpen, setRailOpen] = useState(false);
+  const [notedListOpen, setNotedListOpen] = useState(false);
   const panelWidth = vp.isDesktop ? 400 : 360;
   const koreaMuniNames = Object.keys(KOREA_INFO);
+
+  useEffect(() => {
+    setNotedListOpen(false);
+  }, [isKorea]);
 
   return (
     <div style={{ display: "flex", minHeight: "100vh" }}>
@@ -2193,7 +2171,7 @@ function MapWorkspace({ vp, selectedCountry, notes, notedKeys, onSelectCountry, 
 
       <div style={{ flex: 1, minWidth: 0, position: "relative", padding: "34px", boxSizing: "border-box", overflowY: "auto" }}>
         <div style={{ marginBottom: 16 }}>
-          <h1 style={{ fontFamily: FONT_SERIF, fontWeight: 500, fontSize: 28, color: C.ink, margin: 0 }}>지도 필기</h1>
+          <h1 style={{ fontFamily: FONT_SERIF, fontWeight: 500, fontSize: 28, color: C.ink, margin: "0 0 12px" }}>지도 필기</h1>
           <MapSubjectTabs mapSubject={mapSubject} onSwitchSubject={onSwitchSubject} />
           <p style={{ fontFamily: FONT_SANS, fontSize: 12.5, color: C.inkSoft, margin: "6px 0 16px" }}>
             {isKorea ? "시/군/구를 골라서 지리 정보·지형·기후·거주 공간의 변화와 지역 개발·생산과 소비·인구·지역지리 내용을 정리해요." : "나라를 골라서 기후·지형·인문·지역지리 내용을 정리해요."}
@@ -2246,13 +2224,71 @@ function MapWorkspace({ vp, selectedCountry, notes, notedKeys, onSelectCountry, 
                 <MiniWorldMap activeKey={selectedCountry} highlightKeys={notedKeys} onSelectCountry={onSelectCountry} viewBox={ZOOM_REGIONS.find((z) => z.key === zoomKey).viewBox} />
               )}
             </Card>
-            <div style={{ marginTop: 16, background: "rgba(255,255,255,0.9)", display: "inline-flex", gap: 24, alignItems: "center", padding: "14px 20px", borderRadius: 22, boxShadow: C.shadow }}>
-              <div>
-                <div style={{ fontFamily: FONT_SANS, fontSize: 11, color: C.inkSoft }}>{isKorea ? "필기한 시/군/구" : "필기한 나라"}</div>
-                <div style={{ fontFamily: FONT_SANS, fontSize: 16, fontWeight: 500, color: C.ink, marginTop: 2 }}>
-                  {notedKeys.length} / {isKorea ? koreaMuniNames.length : COUNTRIES.length}
+            <div style={{ marginTop: 16, position: "relative", display: "inline-block" }}>
+              <button
+                onClick={() => notedKeys.length > 0 && setNotedListOpen((v) => !v)}
+                style={{
+                  background: "rgba(255,255,255,0.9)",
+                  display: "flex",
+                  gap: 24,
+                  alignItems: "center",
+                  padding: "14px 20px",
+                  borderRadius: 22,
+                  boxShadow: C.shadow,
+                  border: "none",
+                  cursor: notedKeys.length > 0 ? "pointer" : "default",
+                }}
+              >
+                <div>
+                  <div style={{ fontFamily: FONT_SANS, fontSize: 11, color: C.inkSoft, textAlign: "left" }}>{isKorea ? "필기한 시/군/구" : "필기한 나라"}</div>
+                  <div style={{ fontFamily: FONT_SANS, fontSize: 16, fontWeight: 500, color: C.ink, marginTop: 2 }}>
+                    {notedKeys.length} / {isKorea ? koreaMuniNames.length : COUNTRIES.length}
+                  </div>
                 </div>
-              </div>
+              </button>
+              {notedListOpen && notedKeys.length > 0 && (
+                <div
+                  style={{
+                    position: "absolute",
+                    top: "calc(100% + 8px)",
+                    left: 0,
+                    background: "#fff",
+                    borderRadius: 16,
+                    boxShadow: C.shadow,
+                    padding: 8,
+                    maxHeight: 280,
+                    overflowY: "auto",
+                    minWidth: 220,
+                    zIndex: 20,
+                  }}
+                >
+                  {notedKeys.map((k) => (
+                    <button
+                      key={k}
+                      onClick={() => {
+                        onSelectCountry(k);
+                        setNotedListOpen(false);
+                      }}
+                      style={{
+                        display: "block",
+                        width: "100%",
+                        textAlign: "left",
+                        background: "none",
+                        border: "none",
+                        padding: "9px 12px",
+                        borderRadius: 12,
+                        fontFamily: FONT_SANS,
+                        fontSize: 13.5,
+                        color: C.ink,
+                        cursor: "pointer",
+                        boxSizing: "border-box",
+                      }}
+                    >
+                      {isKorea ? k : COUNTRY_BY_EN[k] ? COUNTRY_BY_EN[k].ko : k}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           </>
         )}
@@ -3731,7 +3767,7 @@ function GeoMemoAppInner({ user, onSignOut }) {
       const nextForCountry = { ...existing, [tagKey]: [...list, { id: uid(), createdAt: Date.now(), ...data }] };
       const next = { ...prev, [countryKey]: nextForCountry };
       safeSet(`mapnotes:${countryKey}`, JSON.stringify(nextForCountry));
-      if (!prev[countryKey]) persistMapIndex([...Object.keys(prev), countryKey]);
+      persistMapIndex(Object.keys(next).filter((k) => anyNoted(next[k])));
       return next;
     });
   };
@@ -3743,6 +3779,7 @@ function GeoMemoAppInner({ user, onSignOut }) {
       const nextForCountry = { ...existing, [tagKey]: list };
       const next = { ...prev, [countryKey]: nextForCountry };
       safeSet(`mapnotes:${countryKey}`, JSON.stringify(nextForCountry));
+      persistMapIndex(Object.keys(next).filter((k) => anyNoted(next[k])));
       return next;
     });
   };
@@ -3892,7 +3929,6 @@ function GeoMemoAppInner({ user, onSignOut }) {
     const isKorea = mapSubject === "korea";
     // 태그 종류(세계지리 MAP_TAGS vs 한국지리 KOREA_MAP_TAGS)에 상관없이,
     // 그 나라/시도에 뭐라도 필기가 있으면 "필기됨"으로 친다.
-    const anyNoted = (obj) => Object.values(obj || {}).some((arr) => (arr || []).length > 0);
     const allNotedKeys = Object.keys(mapNotesByCountry).filter((k) => anyNoted(mapNotesByCountry[k]));
     const notedKeys = allNotedKeys.filter((k) => (isKorea ? !!KOREA_INFO[k] : !!COUNTRY_BY_EN[k] || !!WORLD_PATHS[EN_TO_SVGNAME[k] || k]));
     const switchSubject = (subj) => (screen.name === "mapHome" ? openMapHome(subj) : openMapHome(subj));
