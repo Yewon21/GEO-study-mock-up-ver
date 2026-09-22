@@ -954,9 +954,9 @@ function LinkPickerModal({ folders, cardsByFolder, onPick, onCancel }) {
   );
 }
 
-function NoteEntryForm({ folders, cardsByFolder, onSave, onCancel }) {
-  const [text, setText] = useState("");
-  const [link, setLink] = useState(null);
+function NoteEntryForm({ folders, cardsByFolder, onSave, onCancel, initial }) {
+  const [text, setText] = useState(initial ? initial.text : "");
+  const [link, setLink] = useState(initial ? initial.link || null : null);
   const [showPicker, setShowPicker] = useState(false);
   const taRef = useRef(null);
 
@@ -1011,7 +1011,7 @@ function NoteEntryForm({ folders, cardsByFolder, onSave, onCancel }) {
         </button>
       )}
       <div style={{ display: "flex", gap: 8 }}>
-        <PillButton onClick={() => text.trim() && onSave({ text: text.trim(), link })}>저장</PillButton>
+        <PillButton onClick={() => text.trim() && onSave({ text: text.trim(), link })}>{initial ? "수정 완료" : "저장"}</PillButton>
         <PillButton tone="secondary" onClick={onCancel}>취소</PillButton>
       </div>
       {showPicker && (
@@ -1080,8 +1080,9 @@ function LinkedCardPreview({ card }) {
 /* ----------------------------------------------------------------
    화면: 국가별 필기
 ----------------------------------------------------------------- */
-function CountryNotesScreen({ countryKey, notes, notedKeys, onBack, onAddEntry, onDeleteEntry, onSelectCountry, folders, cardsByFolder, wide }) {
+function CountryNotesScreen({ countryKey, notes, notedKeys, onBack, onAddEntry, onDeleteEntry, onUpdateEntry, onSelectCountry, folders, cardsByFolder, wide }) {
   const [addingTag, setAddingTag] = useState(null);
+  const [editingEntryId, setEditingEntryId] = useState(null);
   const [expandedLinks, setExpandedLinks] = useState(() => new Set());
   const [zoomKey, setZoomKey] = useState("world");
   const meta = COUNTRY_BY_EN[countryKey];
@@ -1201,6 +1202,21 @@ function CountryNotesScreen({ countryKey, notes, notedKeys, onBack, onAddEntry, 
               <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 8 }}>
                 {entries.map((entry) => {
                   const isExpanded = expandedLinks.has(entry.id);
+                  if (editingEntryId === entry.id) {
+                    return (
+                      <NoteEntryForm
+                        key={entry.id}
+                        folders={folders}
+                        cardsByFolder={cardsByFolder}
+                        initial={entry}
+                        onCancel={() => setEditingEntryId(null)}
+                        onSave={(data) => {
+                          onUpdateEntry(tag.key, entry.id, data);
+                          setEditingEntryId(null);
+                        }}
+                      />
+                    );
+                  }
                   return (
                     <Card key={entry.id} style={{ padding: "12px 14px", borderLeft: `3px solid ${tag.color}` }}>
                       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
@@ -1211,6 +1227,15 @@ function CountryNotesScreen({ countryKey, notes, notedKeys, onBack, onAddEntry, 
                               <Link2 size={13} />
                             </RoundIconButton>
                           )}
+                          <RoundIconButton
+                            title="수정"
+                            onClick={() => {
+                              setAddingTag(null);
+                              setEditingEntryId(entry.id);
+                            }}
+                          >
+                            <Pencil size={13} />
+                          </RoundIconButton>
                           <RoundIconButton title="삭제" tone="danger" onClick={() => onDeleteEntry(tag.key, entry.id)}>
                             <Trash2 size={13} />
                           </RoundIconButton>
@@ -1239,7 +1264,10 @@ function CountryNotesScreen({ countryKey, notes, notedKeys, onBack, onAddEntry, 
               />
             ) : (
               <button
-                onClick={() => setAddingTag(tag.key)}
+                onClick={() => {
+                  setEditingEntryId(null);
+                  setAddingTag(tag.key);
+                }}
                 style={{ display: "flex", alignItems: "center", gap: 6, background: "transparent", border: "none", color: C.inkSoft, fontFamily: FONT_SANS, fontSize: 13, cursor: "pointer", padding: 0 }}
               >
                 <Plus size={14} /> {tag.label} 내용 추가
@@ -1507,14 +1535,16 @@ function MapContinentRail({ query, setQuery, expanded, setExpanded, notedKeys, o
   );
 }
 
-function CountryNotesPanel({ countryKey, notes, onAddEntry, onDeleteEntry, onSelectCountry, folders, cardsByFolder, width = 394 }) {
+function CountryNotesPanel({ countryKey, notes, onAddEntry, onDeleteEntry, onUpdateEntry, onSelectCountry, folders, cardsByFolder, width = 394 }) {
   const [activeTag, setActiveTag] = useState(MAP_TAGS[0].key);
   const [adding, setAdding] = useState(false);
+  const [editingId, setEditingId] = useState(null);
   const [expandedLinks, setExpandedLinks] = useState(() => new Set());
 
   useEffect(() => {
     setActiveTag(MAP_TAGS[0].key);
     setAdding(false);
+    setEditingId(null);
   }, [countryKey]);
 
   const meta = COUNTRY_BY_EN[countryKey];
@@ -1576,6 +1606,7 @@ function CountryNotesPanel({ countryKey, notes, onAddEntry, onDeleteEntry, onSel
             onClick={() => {
               setActiveTag(tag.key);
               setAdding(false);
+              setEditingId(null);
             }}
             style={{
               padding: "7px 13px",
@@ -1603,6 +1634,21 @@ function CountryNotesPanel({ countryKey, notes, onAddEntry, onDeleteEntry, onSel
         <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 12 }}>
           {entries.map((entry) => {
             const isExpanded = expandedLinks.has(entry.id);
+            if (editingId === entry.id) {
+              return (
+                <NoteEntryForm
+                  key={entry.id}
+                  folders={folders}
+                  cardsByFolder={cardsByFolder}
+                  initial={entry}
+                  onCancel={() => setEditingId(null)}
+                  onSave={(data) => {
+                    onUpdateEntry(activeTag, entry.id, data);
+                    setEditingId(null);
+                  }}
+                />
+              );
+            }
             return (
               <div key={entry.id} style={{ background: C.fieldBg, borderRadius: 20, padding: 18 }}>
                 <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
@@ -1613,6 +1659,15 @@ function CountryNotesPanel({ countryKey, notes, onAddEntry, onDeleteEntry, onSel
                         <Link2 size={13} />
                       </RoundIconButton>
                     )}
+                    <RoundIconButton
+                      title="수정"
+                      onClick={() => {
+                        setAdding(false);
+                        setEditingId(entry.id);
+                      }}
+                    >
+                      <Pencil size={13} />
+                    </RoundIconButton>
                     <RoundIconButton title="삭제" tone="danger" onClick={() => onDeleteEntry(activeTag, entry.id)}>
                       <Trash2 size={13} />
                     </RoundIconButton>
@@ -1666,7 +1721,7 @@ function CountryNotesPanel({ countryKey, notes, onAddEntry, onDeleteEntry, onSel
         </div>
       )}
 
-      {!adding && (
+      {!adding && !editingId && (
         <button
           onClick={() => setAdding(true)}
           style={{
@@ -1694,7 +1749,7 @@ function CountryNotesPanel({ countryKey, notes, onAddEntry, onDeleteEntry, onSel
   );
 }
 
-function MapWorkspace({ vp, selectedCountry, notes, notedKeys, onSelectCountry, onAddEntry, onDeleteEntry, folders, cardsByFolder }) {
+function MapWorkspace({ vp, selectedCountry, notes, notedKeys, onSelectCountry, onAddEntry, onDeleteEntry, onUpdateEntry, folders, cardsByFolder }) {
   const [query, setQuery] = useState("");
   const [expanded, setExpanded] = useState(null);
   const [zoomKey, setZoomKey] = useState("world");
@@ -1774,6 +1829,7 @@ function MapWorkspace({ vp, selectedCountry, notes, notedKeys, onSelectCountry, 
         notes={notes}
         onAddEntry={onAddEntry}
         onDeleteEntry={onDeleteEntry}
+        onUpdateEntry={onUpdateEntry}
         onSelectCountry={onSelectCountry}
         folders={folders}
         cardsByFolder={cardsByFolder}
@@ -3247,6 +3303,17 @@ function GeoMemoAppInner({ user, onSignOut }) {
     });
   };
 
+  const updateMapEntry = (countryKey, tagKey, entryId, data) => {
+    setMapNotesByCountry((prev) => {
+      const existing = prev[countryKey] || {};
+      const list = (existing[tagKey] || []).map((e) => (e.id === entryId ? { ...e, ...data } : e));
+      const nextForCountry = { ...existing, [tagKey]: list };
+      const next = { ...prev, [countryKey]: nextForCountry };
+      safeSet(`mapnotes:${countryKey}`, JSON.stringify(nextForCountry));
+      return next;
+    });
+  };
+
   const restoreBackup = (payload) => {
     setConfirmState({
       message: `백업을 불러오면 현재 데이터가 모두 대체됩니다. 계속할까요? (폴더 ${payload.folders.length}개)`,
@@ -3390,6 +3457,7 @@ function GeoMemoAppInner({ user, onSignOut }) {
           onSelectCountry={openCountry}
           onAddEntry={(tagKey, data) => addMapEntry(selectedCountry, tagKey, data)}
           onDeleteEntry={(tagKey, entryId) => deleteMapEntry(selectedCountry, tagKey, entryId)}
+          onUpdateEntry={(tagKey, entryId, data) => updateMapEntry(selectedCountry, tagKey, entryId, data)}
           folders={folders}
           cardsByFolder={cardsByFolder}
         />,
@@ -3410,6 +3478,7 @@ function GeoMemoAppInner({ user, onSignOut }) {
         onBack={openMapHome}
         onAddEntry={(tagKey, data) => addMapEntry(screen.countryKey, tagKey, data)}
         onDeleteEntry={(tagKey, entryId) => deleteMapEntry(screen.countryKey, tagKey, entryId)}
+        onUpdateEntry={(tagKey, entryId, data) => updateMapEntry(screen.countryKey, tagKey, entryId, data)}
         onSelectCountry={openCountry}
         folders={folders}
         cardsByFolder={cardsByFolder}
