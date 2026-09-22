@@ -269,14 +269,24 @@ function parseRankingPaste(text) {
   return [trimmed.replace(bulletPattern, "").trim()].filter(Boolean);
 }
 
+/* 줄바꿈(\n)을 <br/>로 바꿔서 저장된 줄바꿈이 화면에도 그대로 보이게 한다. */
+function renderLineBreaks(str, keyPrefix) {
+  return str.split("\n").map((line, i) => (
+    <React.Fragment key={`${keyPrefix}-${i}`}>
+      {i > 0 && <br />}
+      {line}
+    </React.Fragment>
+  ));
+}
+
 function renderRich(text) {
   if (!text) return text;
   const parts = String(text).split(/(\*\*[^*]+\*\*)/g);
   return parts.map((part, i) => {
     if (part.startsWith("**") && part.endsWith("**") && part.length > 4) {
-      return <strong key={i}>{part.slice(2, -2)}</strong>;
+      return <strong key={i}>{renderLineBreaks(part.slice(2, -2), `b${i}`)}</strong>;
     }
-    return <React.Fragment key={i}>{part}</React.Fragment>;
+    return <React.Fragment key={i}>{renderLineBreaks(part, `t${i}`)}</React.Fragment>;
   });
 }
 
