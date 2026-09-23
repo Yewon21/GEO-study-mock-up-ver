@@ -330,6 +330,40 @@ export async function safeDelete(key) {
   lsDelete(key);
 }
 
+/* 저장된 키 중 prefix로 시작하는 것들을 모두 나열한다.
+   별도의 "인덱스" 키를 따로 관리하지 않고 실제 저장된 키를 직접 조회하므로,
+   인덱스 갱신이 누락돼도(예: 과거 버그) 실제 데이터는 항상 찾아낼 수 있다. */
+export async function listKeys(prefix = "") {
+  if (supabase && currentUserId) {
+    const keys = await kvKeysRemote();
+    return prefix ? keys.filter((k) => k.startsWith(prefix)) : keys;
+  }
+
+  const backend = await pickBackend();
+  if (backend === "idb") {
+    try {
+      const keys = await idbKeys();
+      if (keys && keys.length) {
+        return prefix ? keys.filter((k) => k.startsWith(prefix)) : keys;
+      }
+    } catch (e) {}
+  }
+
+  // localStorage (host 백엔드의 미러 포함)에서 직접 스캔
+  try {
+    const keys = [];
+    for (let i = 0; i < window.localStorage.length; i++) {
+      const fullKey = window.localStorage.key(i);
+      if (!fullKey || !fullKey.startsWith(LS_PREFIX) || fullKey === MIGRATED_FLAG) continue;
+      const key = fullKey.slice(LS_PREFIX.length);
+      if (!prefix || key.startsWith(prefix)) keys.push(key);
+    }
+    return keys;
+  } catch (e) {
+    return [];
+  }
+}
+
 /* ---------- 로컬 → 계정 1회 이전 ---------- */
 async function collectLegacyLocalKeys() {
   const keys = new Set();

@@ -32,6 +32,7 @@ import {
   safeGet,
   safeSet,
   safeDelete,
+  listKeys,
   requestPersistence,
   supabase,
   authReady,
@@ -3638,11 +3639,13 @@ function GeoMemoAppInner({ user, onSignOut }) {
       setFolders(parsedFolders);
       setCardsByFolder(Object.fromEntries(entries));
 
-      const rawIndex = await safeGet("mapnotes:index");
-      const countryKeys = rawIndex ? JSON.parse(rawIndex) : [];
+      // 별도의 "인덱스" 키에 의존하지 않고, 실제 저장된 mapnotes:* 키를 직접 나열해서 불러온다.
+      // (인덱스 갱신이 누락된 과거 데이터도 이 방식이면 항상 찾아낸다.)
+      const mapNoteKeys = (await listKeys("mapnotes:")).filter((k) => k !== "mapnotes:index");
       const noteEntries = await Promise.all(
-        countryKeys.map(async (key) => {
-          const raw = await safeGet(`mapnotes:${key}`);
+        mapNoteKeys.map(async (fullKey) => {
+          const key = fullKey.slice("mapnotes:".length);
+          const raw = await safeGet(fullKey);
           return [key, raw ? JSON.parse(raw) : {}];
         })
       );
@@ -3746,10 +3749,6 @@ function GeoMemoAppInner({ user, onSignOut }) {
     setScreen({ name: "mapHome", mapSubject });
   };
 
-  const persistMapIndex = async (keys) => {
-    await safeSet("mapnotes:index", JSON.stringify(keys));
-  };
-
   const openCountry = async (countryKey, subj) => {
     const mapSubject = subj || (KOREA_INFO[countryKey] ? "korea" : "world");
     setLastMapSubject(mapSubject);
@@ -3767,7 +3766,6 @@ function GeoMemoAppInner({ user, onSignOut }) {
       const nextForCountry = { ...existing, [tagKey]: [...list, { id: uid(), createdAt: Date.now(), ...data }] };
       const next = { ...prev, [countryKey]: nextForCountry };
       safeSet(`mapnotes:${countryKey}`, JSON.stringify(nextForCountry));
-      persistMapIndex(Object.keys(next).filter((k) => anyNoted(next[k])));
       return next;
     });
   };
@@ -3779,7 +3777,6 @@ function GeoMemoAppInner({ user, onSignOut }) {
       const nextForCountry = { ...existing, [tagKey]: list };
       const next = { ...prev, [countryKey]: nextForCountry };
       safeSet(`mapnotes:${countryKey}`, JSON.stringify(nextForCountry));
-      persistMapIndex(Object.keys(next).filter((k) => anyNoted(next[k])));
       return next;
     });
   };
